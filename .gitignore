@@ -1,31 +1,73 @@
-# Segredos e configuração local
+# ==========================================
+# SEGREDOS E CONFIGURAÇÃO LOCAL
+# ==========================================
+
 .env
 .env.*
 !.env.example
 
-# Ambientes e caches Python
+
+# ==========================================
+# AMBIENTES E CACHES PYTHON
+# ==========================================
+
 .venv/
 .venv-1/
 
 venv/
 env/
+
 __pycache__/
 *.py[cod]
 *.pyd
+
 .pytest_cache/
 .mypy_cache/
 
-# Áudio e capturas locais
+
+# ==========================================
+# MEMÓRIA E DADOS LOCAIS
+# ==========================================
+
+*.db
+*.sqlite
+*.sqlite3
+
+memory/data/
+data/
+storage/
+memory/memory.json
+
+# ==========================================
+# ÁUDIO E CAPTURAS LOCAIS
+# ==========================================
+
 *.wav
 *.mp3
 *.ogg
+
 *.jpg
 *.jpeg
 *.png
 
-# Ferramentas e arquivos do sistema
+
+# ==========================================
+# FERRAMENTAS E ARQUIVOS DO SISTEMA
+# ==========================================
+
 .vscode/
 .idea/
+
 *.log
+
 Thumbs.db
 Desktop.ini
+
+
+# ==========================================
+# TEMPORÁRIOS
+# ==========================================
+
+*.tmp
+*.temp
+*.bak
