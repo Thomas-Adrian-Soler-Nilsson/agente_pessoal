@@ -1,34 +1,301 @@
-# Agente Pessoal
+# 🤖 Agente Pessoal
 
-Agente de voz local para Windows, com conversa em portugues do Brasil, acesso controlado a arquivos, abertura de aplicativos e visao por tela ou webcam.
+> Um assistente de voz para Windows, construído em Python, com múltiplos provedores de IA, memória de conversa, memória persistente, ferramentas locais, visão por tela/webcam e geração de imagens.
 
-## Modos
+<p align="center">
+  <strong>🎤 Voz</strong> · <strong>🧠 Memória</strong> · <strong>👁️ Visão</strong> · <strong>🖥️ Automação</strong> · <strong>🎨 Imagens</strong>
+</p>
 
-- **Gemini Live**: conversa de voz em tempo real, tela, webcam e acompanhamento continuo.
-- **Groq**: conversa por STT/TTS local e selecao de modelo.
-- **OpenRouter**: conversa por STT/TTS local e selecao de modelo.
-- **NVIDIA**: conversa por STT/TTS local usando a API NVIDIA NIM e selecao de modelo.
-- **Automatico**: tenta Groq, OpenRouter e NVIDIA nessa ordem, preservando o contexto.
+---
 
-## Requisitos
+## ✨ Sobre o projeto
 
-- Windows com Python 3.12 ou compativel.
-- Microfone e saida de audio.
-- Webcam apenas para os recursos de webcam.
-- Chaves para os provedores que serao usados.
+O **Agente Pessoal** nasceu como um assistente de voz local para Windows e está evoluindo para uma arquitetura de agente pessoal capaz de combinar diferentes modelos e serviços de IA.
 
-## Instalacao
+A ideia é separar as responsabilidades: o modelo de linguagem decide o que fazer, enquanto ferramentas específicas executam ações no computador, consultam arquivos, capturam imagens, geram imagens ou acessam memórias.
 
-No PowerShell, dentro da pasta do projeto:
+O projeto atualmente suporta **Gemini Live, Groq, OpenRouter e NVIDIA**, permitindo escolher o provedor e, quando disponível, o modelo utilizado.
+
+---
+
+## 🚀 Principais funcionalidades
+
+### 🎙️ Conversa por voz
+
+- Reconhecimento de voz com:
+  - **Groq Whisper**
+  - **Fish Audio ASR**
+  - **Whisper local com faster-whisper**
+- Respostas faladas com:
+  - **Fish Audio TTS**
+  - **Edge TTS**
+  - **Gemini TTS**
+- Streaming da resposta do modelo para o TTS.
+- Interrupção da fala por `Esc`.
+- Suporte experimental à interrupção da fala por detecção de voz no microfone.
+
+### 🧠 Memória
+
+O agente possui duas camadas de memória:
+
+**Memória momentânea**
+
+Mantém o contexto da conversa atual enquanto o agente está sendo executado.
+
+**Memória temporal/persistente**
+
+Armazenada localmente em JSON e preservada mesmo depois de fechar o programa. O próprio modelo decide quando uma informação merece ser lembrada.
+
+A memória temporal pode:
+
+- salvar informações importantes;
+- pesquisar memórias relevantes;
+- evitar duplicações;
+- classificar informações por categoria;
+- atribuir importância de `0.0` a `1.0`;
+- atualizar memórias;
+- remover memórias;
+- expirar informações quando configurado;
+- lidar com pequenas variações de palavras e erros comuns de transcrição.
+
+Exemplo de categorias:
+
+```text
+project
+preference
+goal
+person
+configuration
+fact
+general
+```
+
+Exemplo de comportamento:
+
+```text
+Você: Quero transformar o Agente Pessoal em um produto.
+
+Agente:
+🧠 IA → memória salva [goal]
+
+"Thomas quer transformar o Agente Pessoal em produto pessoal."
+```
+
+> A memória local fica em `memory/memory.json` e é ignorada pelo Git para não enviar dados pessoais ao repositório.
+
+### 👁️ Visão
+
+O agente pode utilizar ferramentas para:
+
+- capturar a tela atual;
+- capturar a webcam;
+- analisar imagens retornadas pelas ferramentas.
+
+### 🖥️ Ferramentas do computador
+
+O modelo pode utilizar ferramentas para:
+
+- abrir aplicativos;
+- abrir diretórios;
+- abrir URLs;
+- listar diretórios;
+- procurar arquivos;
+- ler arquivos;
+- consultar informações de arquivos.
+
+As operações de arquivos possuem restrições de segurança e não oferecem comandos destrutivos arbitrários.
+
+### 🎨 Geração de imagens
+
+O agente possui uma ferramenta de geração de imagens integrada à **Hugging Face Inference API**.
+
+Quando o usuário pede para criar uma imagem, o modelo pode chamar `generate_image`, gerar um prompt detalhado e salvar o resultado localmente.
+
+Por padrão, as imagens são salvas em:
+
+```text
+Pictures/AgentePessoal/
+```
+
+O modelo de imagem pode ser configurado pelo `.env`.
+
+---
+
+## 🧩 Provedores de IA
+
+### Gemini Live
+
+Modo de conversa em tempo real com voz nativa, tela e webcam.
+
+### Groq
+
+Modo compatível com chat completions, com seleção de modelo e integração com Groq Whisper para STT.
+
+### OpenRouter
+
+Permite utilizar diferentes modelos através da API compatível com OpenAI e selecionar o modelo no início da sessão.
+
+### NVIDIA
+
+Integração com a API NVIDIA NIM, também com seleção de modelo.
+
+### Automático
+
+Modo que permite tentar os provedores configurados automaticamente, preservando o contexto da conversa.
+
+---
+
+## 🏗️ Arquitetura
+
+```text
+                    ┌──────────────────────┐
+                    │      Usuário         │
+                    │   🎤 Voz / Texto     │
+                    └──────────┬───────────┘
+                               │
+                               ▼
+                    ┌──────────────────────┐
+                    │      STT / Input     │
+                    │ Groq / Fish / Local  │
+                    └──────────┬───────────┘
+                               │
+                               ▼
+                    ┌──────────────────────┐
+                    │    Agente / LLM      │
+                    │ Groq / OpenRouter /  │
+                    │ NVIDIA / Gemini      │
+                    └───────┬───────┬──────┘
+                            │       │
+                ┌───────────┘       └────────────┐
+                ▼                                ▼
+       ┌─────────────────┐              ┌─────────────────┐
+       │     Memória     │              │    Ferramentas  │
+       │ momentânea +    │              │ PC / arquivos / │
+       │ temporal        │              │ tela / webcam   │
+       └─────────────────┘              └────────┬────────┘
+                                                 │
+                                                 ▼
+                                      ┌────────────────────┐
+                                      │ Geração de imagem  │
+                                      │ Hugging Face        │
+                                      └────────────────────┘
+                            │
+                            ▼
+                    ┌──────────────────────┐
+                    │       TTS            │
+                    │ Fish / Edge / Gemini │
+                    └──────────┬───────────┘
+                               │
+                               ▼
+                         🔊 Resposta
+```
+
+---
+
+## 📁 Estrutura do projeto
+
+```text
+agente_pessoal/
+│
+├── agent/
+│   └── agent.py
+│
+├── audio/
+│   ├── microphone.py
+│   ├── speech_to_text.py
+│   └── text_to_speech.py
+│
+├── gemini_live/
+│   └── client.py
+│
+├── memory/
+│   └── temporal_memory.py
+│
+├── providers/
+│   ├── compatible_agent.py
+│   ├── groq_provider.py
+│   ├── nvidia_provider.py
+│   ├── openrouter_provider.py
+│   └── router.py
+│
+├── screen/
+│   └── screen.py
+│
+├── tools/
+│   ├── computer.py
+│   ├── files.py
+│   └── image_generation.py
+│
+├── ui/
+│   └── ui.py
+│
+├── webcam/
+│   └── webcam.py
+│
+├── app.py
+├── .env.example
+├── .gitignore
+└── requirements.txt
+```
+
+---
+
+## 🛠️ Tecnologias
+
+- **Python 3.12+**
+- Google Gemini / Gemini Live
+- Groq API
+- OpenRouter API
+- NVIDIA NIM
+- Fish Audio
+- Hugging Face Inference API
+- faster-whisper
+- Edge TTS
+- OpenCV
+- Pillow
+- PyAutoGUI
+- pygame
+- sounddevice
+- python-dotenv
+- Rich
+- pypdf
+- python-docx
+
+As dependências atualmente utilizadas ficam centralizadas em `requirements.txt`.
+
+---
+
+## ⚙️ Instalação
+
+### 1. Clone o projeto
+
+```powershell
+git clone https://github.com/Thomas-Adrian-Soler-Nilsson/agente_pessoal.git
+cd agente_pessoal
+```
+
+### 2. Crie o ambiente virtual
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+```
+
+### 3. Instale as dependências
+
+```powershell
 python -m pip install -r requirements.txt
+```
+
+### 4. Configure as variáveis de ambiente
+
+```powershell
 Copy-Item .env.example .env
 ```
 
-Edite `.env` apenas localmente e preencha as chaves:
+Depois edite o `.env` e adicione somente as chaves dos serviços que pretende utilizar.
+
+Exemplo:
 
 ```env
 GEMINI_API_KEY=sua_chave_gemini
@@ -37,76 +304,193 @@ OPENROUTER_API_KEY=sua_chave_openrouter
 NVIDIA_API_KEY=sua_chave_nvidia
 FISH_API_KEY=sua_chave_fish
 FISH_VOICE_ID=id_da_sua_voz_fish
-FISH_VOICES=Voz principal=id_1,Voz alternativa=id_2
+HF_API_KEY=sua_chave_huggingface
 ```
 
-Nunca envie `.env` para o Git. Ele ja esta protegido pelo `.gitignore`.
+> **Nunca publique seu `.env`.** O arquivo já está protegido pelo `.gitignore`.
 
-## Executar
+---
+
+## ▶️ Executando
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
 python app.py
 ```
 
-Escolha o provedor no menu. Groq, OpenRouter e NVIDIA exibem os modelos configurados em `GROQ_MODELS`, `OPENROUTER_MODELS` e `NVIDIA_MODELS`, separados por virgulas. Os modelos padrao podem ser alterados com `GROQ_MODEL`, `OPENROUTER_MODEL` e `NVIDIA_MODEL`.
+O programa apresenta um menu para escolher o modo:
 
-O TTS tenta interromper a fala quando detecta sua voz. Ajuste a sensibilidade se necessario:
+```text
+======================================
+           AGENTE PESSOAL
+======================================
 
-```env
-TTS_INTERRUPT_THRESHOLD=0.08
+[1] Gemini Live
+[2] Groq
+[3] OpenRouter
+[4] NVIDIA
+[5] Automático
 ```
 
-Valores maiores reduzem interrupcoes causadas pelo ruido ou pelo proprio alto-falante.
+Nos provedores compatíveis, o agente também permite selecionar o modelo disponível/configurado.
 
-Para evitar que o som do proprio computador interrompa a resposta, a interrupcao por voz fica desativada por padrao. Para reativar:
+---
+
+## 🔊 Configuração de voz
+
+### Edge TTS
+
+É o modo mais simples para TTS local:
+
+```env
+TTS_PROVIDER=edge
+```
+
+### Fish Audio
+
+```env
+TTS_PROVIDER=fish
+FISH_API_KEY=sua_chave
+FISH_VOICE_ID=seu_reference_id
+FISH_MODEL=s2.1-pro-free
+```
+
+Também é possível configurar várias vozes:
+
+```env
+FISH_VOICES=Goku=id_1,Lula=id_2,Voz personalizada=id_3
+```
+
+O agente apresenta as vozes disponíveis durante a inicialização e permite escolher uma.
+
+### Gemini TTS
+
+```env
+TTS_PROVIDER=gemini
+GEMINI_API_KEY=sua_chave
+GEMINI_TTS_MODEL=gemini-2.5-flash-preview-tts
+GEMINI_TTS_VOICE=Kore
+```
+
+---
+
+## 🎤 Interrupção da fala
+
+Durante uma resposta falada, `Esc` pode interromper imediatamente a reprodução.
+
+A interrupção automática por voz pode ser ativada com:
 
 ```env
 TTS_INTERRUPT_ENABLED=true
 TTS_INTERRUPT_DELAY=0.7
+TTS_INTERRUPT_THRESHOLD=0.08
 ```
 
-Durante uma resposta falada, pressione `Esc` para interromper imediatamente sem encerrar o agente. A interrupcao por voz pode ser ativada nas variaveis acima.
+O `TTS_INTERRUPT_THRESHOLD` controla a sensibilidade do microfone. Valores maiores tendem a reduzir interrupções causadas por ruído ou pelo próprio áudio do computador.
 
-O TTS usa Edge TTS por padrao. Para usar Fish Audio, instale as dependencias e configure:
+---
+
+## 🎨 Geração de imagens
+
+Configure a Hugging Face no `.env`:
 
 ```env
-TTS_PROVIDER=fish
-FISH_API_KEY=sua_chave_fish
-FISH_VOICE_ID=id_da_sua_voz_fish
-FISH_MODEL=s2.1-pro-free
+HF_API_KEY=sua_chave
+HF_IMAGE_MODEL=black-forest-labs/FLUX.1-schnell
 ```
 
-Ao iniciar uma sessao com Fish Audio, o agente exibe as vozes configuradas e permite escolher uma. Use `FISH_VOICES` no formato `Nome=reference_id`, separado por virgulas. Para voltar ao Edge TTS, use `TTS_PROVIDER=edge` ou remova essa variavel. O texto enviado ao Fish Audio preserva tags de emocao, como `[excited]`.
+Depois, basta pedir ao agente algo como:
 
-A ferramenta de leitura extrai texto de arquivos `.txt`, `.md`, codigo, `.pdf` e `.docx`. PDFs escaneados que contem apenas imagens precisam de OCR e ainda nao sao extraidos automaticamente.
+```text
+Crie uma imagem de um robô humanoide futurista em uma cidade brasileira à noite.
+```
 
-## Ferramentas locais
+O agente pode transformar a solicitação em um prompt detalhado, chamar a ferramenta de geração e abrir a imagem resultante.
 
-Os providers de texto compartilham as ferramentas de computador, arquivos, tela e webcam. Por seguranca, os arquivos ficam limitados a Desktop, Documents, Downloads e OneDrive, e operacoes destrutivas nao sao oferecidas.
+---
 
-## Seguranca
+## 🔐 Segurança e privacidade
 
-- Chaves, ambientes virtuais, caches, audios e capturas locais sao ignorados pelo Git.
-- Nao coloque tokens no README, no codigo ou em commits.
-- Se uma chave for exposta, revogue-a no painel do provedor e gere outra.
-- Revise o resultado de `git status --short` antes de qualquer `git push`.
+O projeto foi pensado para manter o máximo possível de dados locais.
 
-## Git
+- Chaves de API ficam no `.env`.
+- `.env`, ambientes virtuais e caches são ignorados pelo Git.
+- A memória persistente local é ignorada pelo Git.
+- Áudios e capturas locais são ignorados pelo Git.
+- Ferramentas de arquivos possuem escopo controlado.
+- Não são oferecidos comandos destrutivos arbitrários.
+- O modelo não deve inventar conteúdo de arquivos: resultados das ferramentas são tratados como fonte da verdade.
 
-Inicialize o repositorio e confira os arquivos ignorados:
+Antes de publicar alterações:
 
 ```powershell
-git init
 git status --short
 git status --short --ignored
 ```
 
-O primeiro commit pode ser criado depois de revisar o status:
+Confira principalmente se nenhuma chave, áudio, captura ou memória pessoal entrou no staging.
 
-```powershell
-git add .
-git commit -m "Inicializa agente pessoal"
-```
+---
 
-Este projeto nao define um repositorio remoto. Configure o remote somente depois de confirmar que nenhum segredo aparece no staging.
+## 🧪 Status do projeto
+
+**Em desenvolvimento ativo.**
+
+### Implementado
+
+- [x] Agente de voz para Windows
+- [x] Gemini Live
+- [x] Groq
+- [x] OpenRouter
+- [x] NVIDIA
+- [x] Seleção de modelos
+- [x] STT local / Groq / Fish
+- [x] TTS Edge / Fish / Gemini
+- [x] Personas para vozes Fish
+- [x] Memória momentânea de conversa
+- [x] Memória temporal persistente
+- [x] Busca de memória por ferramenta
+- [x] Decisão do modelo sobre quando salvar memória
+- [x] Ferramentas de arquivos
+- [x] Abertura de aplicativos e URLs
+- [x] Captura de tela
+- [x] Captura de webcam
+- [x] Geração de imagens via Hugging Face
+- [x] Streaming de respostas para TTS
+- [x] Interrupção manual da fala
+
+### Próximos passos
+
+- [ ] Melhorar a interrupção por voz durante o TTS
+- [ ] Evoluir a memória temporal para uma memória mais inteligente
+- [ ] Adicionar memória de longo prazo com recuperação semântica
+- [ ] Melhorar latência do pipeline voz → IA → voz
+- [ ] Expandir ferramentas do computador
+- [ ] Melhorar o sistema de agentes e roteamento de modelos
+- [ ] Criar uma interface gráfica dedicada
+- [ ] Empacotar uma versão instalável para Windows
+
+---
+
+## 📌 Filosofia do projeto
+
+O objetivo não é apenas criar um chatbot que fala.
+
+A proposta é construir um **agente pessoal de verdade**: um sistema capaz de conversar, lembrar, perceber o ambiente, utilizar ferramentas e executar tarefas de forma controlada, mantendo o usuário no comando.
+
+---
+
+## 👨‍💻 Autor
+
+**Thomas Adrian Soler Nilsson**
+
+Projeto pessoal desenvolvido em Python e em evolução contínua.
+
+- GitHub: https://github.com/Thomas-Adrian-Soler-Nilsson
+- Repositório: https://github.com/Thomas-Adrian-Soler-Nilsson/agente_pessoal
+
+---
+
+## 📄 Licença
+
+Nenhuma licença open-source foi definida neste momento. Consulte o autor antes de reutilizar ou redistribuir o projeto.
