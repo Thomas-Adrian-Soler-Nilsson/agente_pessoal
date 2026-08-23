@@ -1,0 +1,29 @@
+# Segredos e configuração local
+.env
+.env.*
+!.env.example
+
+# Ambientes e caches Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Áudio e capturas locais
+*.wav
+*.mp3
+*.ogg
+*.jpg
+*.jpeg
+*.png
+
+# Ferramentas e arquivos do sistema
+.vscode/
+.idea/
+*.log
+Thumbs.db
+Desktop.ini
