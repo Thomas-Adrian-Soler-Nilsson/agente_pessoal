@@ -3,6 +3,7 @@ import re
 
 from dotenv import load_dotenv
 
+from ui import ui
 
 load_dotenv()
 
@@ -65,16 +66,17 @@ class SpeechToText:
                 raise ValueError("GROQ_API_KEY é necessária para o STT da Groq.")
             from groq import Groq
 
-            print("🧠 STT: Groq Whisper API (whisper-large-v3)...")
-            self.groq_client = Groq(api_key=api_key)
-            print("✅ STT Groq pronto.")
+            ui.module_header("STT", icon="🎤")
+            with ui.spinner("Groq Whisper API (whisper-large-v3)..."):
+                self.groq_client = Groq(api_key=api_key)
+            ui.ok("STT Groq pronto.")
             return
 
         if selected == "fish":
             if not self.fish_api_key:
                 raise ValueError("FISH_API_KEY é necessária para o STT da Fish Audio.")
-            print("🧠 STT: Fish Audio ASR API...")
-            print("✅ STT Fish pronto.")
+            ui.module_header("STT", icon="🎤")
+            ui.ok("STT Fish pronto.")
             return
 
         self._load_local()
@@ -83,13 +85,14 @@ class SpeechToText:
         from faster_whisper import WhisperModel
 
         model_size = os.getenv("WHISPER_MODEL", "medium").strip() or "medium"
-        print(f"🧠 STT: Whisper local ({model_size}, biblioteca faster-whisper)...")
-        self.local_model = WhisperModel(
-            model_size,
-            device="cpu",
-            compute_type="int8",
-        )
-        print("✅ STT local pronto.")
+        ui.module_header("STT", icon="🎤")
+        with ui.spinner(f"Whisper local ({model_size}, biblioteca faster-whisper)..."):
+            self.local_model = WhisperModel(
+                model_size,
+                device="cpu",
+                compute_type="int8",
+            )
+        ui.ok("STT local pronto.")
 
     def transcribe(self, audio_file: str, context: str = "") -> str:
         prompt = INITIAL_PROMPT
@@ -102,7 +105,7 @@ class SpeechToText:
             if self.provider == "fish":
                 return self._transcribe_fish(audio_file)
         except Exception as error:
-            print(f"\n⚠️ STT {self.provider} falhou ({error}). Usando Whisper local.")
+            ui.warn(f"STT {self.provider} falhou ({error}). Usando Whisper local.")
             if self.local_model is None:
                 self._load_local()
 

@@ -15,8 +15,10 @@ import edge_tts
 import numpy as np
 import requests
 import sounddevice as sd
+from ui import ui
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+
 import pygame
 
 
@@ -40,48 +42,40 @@ FISH_VOICE_PERSONALITIES = {
         "e incentive o usuário. Seja simples e espontâneo; evite formalidade "
         "e complexidade desnecessária."
     ),
-
     "Lula": (
         "Persona inspirada no estilo público de um líder sindical e político brasileiro. "
         "Fale de modo caloroso, popular e persuasivo, usando exemplos do cotidiano "
         "e valorizando diálogo e inclusão."
     ),
-
     "Bolsonaro": (
         "Persona inspirada no estilo público de um político brasileiro de fala direta. "
         "Seja objetivo, informal e assertivo, com humor seco quando couber."
     ),
-
     "São Cipriano": (
         "Persona inspirada em uma figura tradicional de misticismo popular. "
         "Fale com serenidade, solenidade e um toque enigmático, oferecendo "
         "conselhos práticos e respeitosos."
     ),
-
     "Isabela": (
         "Persona de uma mulher brasileira acolhedora, perspicaz e confiante. "
         "Fale com calma, empatia e clareza, percebendo nuances e ajudando "
         "o usuário a organizar as ideias sem soar formal demais."
     ),
-
     "Capitão Nascimento": (
         "Persona inspirada em um instrutor militar fictício, disciplinado e exigente. "
         "Seja firme, direto e pragmático, transforme tarefas em objetivos claros "
         "e cobre foco sem humilhar, ameaçar ou incentivar violência."
     ),
-
     "Loli": (
         "Persona de uma personagem jovem fictícia, fofa e muito animada. "
         "Use linguagem leve, curiosidade e entusiasmo, mantendo conteúdo apropriado "
         "e sem sexualização. Não afirme ser uma personagem existente."
     ),
-
     "Fluttershy": (
         "Persona inspirada em uma personagem fictícia gentil e tímida. "
         "Fale suavemente, com empatia e carinho por animais e pessoas, "
         "mas demonstre coragem quando necessário."
     ),
-
     "Anya": (
         "Persona inspirada em uma personagem infantil fictícia, expressiva e brincalhona. "
         "Use frases curtas, curiosidade e humor inocente, mantendo o conteúdo "
@@ -92,7 +86,6 @@ FISH_VOICE_PERSONALITIES = {
 
 def available_fish_voices():
     configured = os.getenv("FISH_VOICES", "")
-
     voices = []
 
     for item in configured.split(","):
@@ -150,7 +143,6 @@ def fish_voice_personality(voice_id: str | None) -> str:
 
 
 class TextToSpeech:
-
     def __init__(
         self,
         voice: str = "pt-BR-AntonioNeural",
@@ -160,10 +152,8 @@ class TextToSpeech:
     ):
         self.voice = voice
         self.rate = rate
-
         self.provider = (
-            provider
-            or os.getenv("TTS_PROVIDER", "edge")
+            provider or os.getenv("TTS_PROVIDER", "edge")
         ).strip().lower()
 
         if self.provider not in {"edge", "fish", "gemini"}:
@@ -245,7 +235,6 @@ class TextToSpeech:
         )
 
         self._monitor_stop = threading.Event()
-
         self._monitor_thread = None
         self._keyboard_thread = None
 
@@ -260,22 +249,18 @@ class TextToSpeech:
         text: str,
         keep_fish_tags: bool = False,
     ) -> str:
-
-        # Remove links Markdown.
         text = re.sub(
             r"\[([^\]]+)\]\([^)]+\)",
             r"\1",
             text,
         )
 
-        # Remove URLs.
         text = re.sub(
             r"https?://\S+|www\.\S+",
             " link ",
             text,
         )
 
-        # Remove caracteres de Markdown.
         punctuation = r"[`*_#|]"
         text = re.sub(
             punctuation,
@@ -283,7 +268,6 @@ class TextToSpeech:
             text,
         )
 
-        # Remove marcadores Fish quando necessário.
         if not keep_fish_tags:
             text = re.sub(
                 r"\[[^\]]+\]",
@@ -291,21 +275,18 @@ class TextToSpeech:
                 text,
             )
 
-        # Remove barras.
         text = re.sub(
             r"[\\/]",
             " ",
             text,
         )
 
-        # Remove separadores exagerados.
         text = re.sub(
             r"[-]{2,}",
             " ",
             text,
         )
 
-        # Normaliza espaços.
         text = re.sub(
             r"\s+",
             " ",
@@ -323,7 +304,6 @@ class TextToSpeech:
         text: str,
         output_file: str,
     ):
-
         if self.provider == "fish":
             self._synthesize_fish(
                 text,
@@ -357,7 +337,6 @@ class TextToSpeech:
         text: str,
         output_file: str,
     ):
-
         if not self.gemini_api_key:
             raise ValueError(
                 "GEMINI_API_KEY não encontrada no .env"
@@ -387,7 +366,6 @@ class TextToSpeech:
 
         part = response.candidates[0].content.parts[0]
         blob = part.inline_data
-
         data = blob.data
 
         mime = (
@@ -400,7 +378,6 @@ class TextToSpeech:
         ).lower()
 
         if "wav" in mime or data[:4] == b"RIFF":
-
             with open(
                 output_file,
                 "wb",
@@ -413,7 +390,6 @@ class TextToSpeech:
             output_file,
             "wb",
         ) as wav:
-
             wav.setnchannels(1)
             wav.setsampwidth(2)
             wav.setframerate(24000)
@@ -428,7 +404,6 @@ class TextToSpeech:
         text: str,
         output_file: str,
     ):
-
         if not self.fish_api_key:
             raise ValueError(
                 "FISH_API_KEY não encontrada no .env"
@@ -470,7 +445,6 @@ class TextToSpeech:
             response.raise_for_status()
 
         except requests.HTTPError as error:
-
             detail = response.text.strip()
 
             if len(detail) > 300:
@@ -499,7 +473,6 @@ class TextToSpeech:
     # =============================================================
 
     def _monitor_microphone(self):
-
         speech_frames = 0
 
         def callback(
@@ -523,22 +496,18 @@ class TextToSpeech:
             )
 
             if rms >= self.interrupt_threshold:
-
                 speech_frames += 1
 
                 if speech_frames >= 3:
-
                     self.stopped = True
-
                     self._interrupt_requested.set()
-
                     self._monitor_stop.set()
+                    pygame.mixer.music.stop()
 
             else:
                 speech_frames = 0
 
         try:
-
             with sd.InputStream(
                 samplerate=16000,
                 channels=1,
@@ -546,17 +515,13 @@ class TextToSpeech:
                 blocksize=480,
                 callback=callback,
             ):
-
                 while not self._monitor_stop.is_set():
-                    self._monitor_stop.wait(
-                        0.05
-                    )
+                    self._monitor_stop.wait(0.05)
 
         except Exception:
             return
 
     def _start_microphone_monitor(self):
-
         self._monitor_stop.clear()
 
         self._monitor_thread = threading.Thread(
@@ -571,34 +536,23 @@ class TextToSpeech:
     # =============================================================
 
     def _monitor_keyboard(self):
-
         if msvcrt is None:
             return
 
         while not self._monitor_stop.is_set():
-
             if msvcrt.kbhit():
-
                 key = msvcrt.getwch()
 
                 if key == "\x1b":
-
                     self.stopped = True
-
                     self._interrupt_requested.set()
-
                     self._monitor_stop.set()
-
                     pygame.mixer.music.stop()
-
                     return
 
-            self._monitor_stop.wait(
-                0.05
-            )
+            self._monitor_stop.wait(0.05)
 
     def _start_keyboard_monitor(self):
-
         self._keyboard_thread = threading.Thread(
             target=self._monitor_keyboard,
             daemon=True,
@@ -611,7 +565,6 @@ class TextToSpeech:
     # =============================================================
 
     def _stop_microphone_monitor(self):
-
         self._monitor_stop.set()
 
         if (
@@ -642,7 +595,6 @@ class TextToSpeech:
         self,
         text: str,
     ):
-
         text = self._speech_text(
             text,
             keep_fish_tags=self.provider == "fish",
@@ -665,13 +617,15 @@ class TextToSpeech:
         ).name
 
         try:
-
             asyncio.run(
                 self._synthesize(
                     text,
                     output_file,
                 )
             )
+
+            if self.stopped:
+                return
 
             pygame.mixer.music.load(
                 output_file
@@ -682,12 +636,12 @@ class TextToSpeech:
             self._start_keyboard_monitor()
 
             if self.interrupt_enabled:
-
                 time.sleep(
                     self.interrupt_delay
                 )
 
-                self._start_microphone_monitor()
+                if not self.stopped:
+                    self._start_microphone_monitor()
 
             while (
                 pygame.mixer.music.get_busy()
@@ -700,7 +654,6 @@ class TextToSpeech:
             self._stop_microphone_monitor()
 
         finally:
-
             self._stop_microphone_monitor()
 
             try:
@@ -711,6 +664,103 @@ class TextToSpeech:
                 pass
 
     # =============================================================
+    # AGRUPAMENTO DE FRASES
+    # =============================================================
+
+    def _extract_speech_block(
+        self,
+        buffer: str,
+        force: bool = False,
+    ):
+        """
+        Extrai um bloco de fala sem cortar frases.
+
+        O bloco:
+        - sempre termina em pontuação natural;
+        - tenta juntar várias frases;
+        - evita chamadas pequenas demais ao TTS;
+        - nunca corta uma palavra ou frase arbitrariamente.
+
+        Retorna:
+            (bloco_pronto, restante)
+        """
+
+        text = buffer.strip()
+
+        if not text:
+            return None, buffer
+
+        # ---------------------------------------------------------
+        # Procura todos os finais de frase existentes.
+        # ---------------------------------------------------------
+
+        matches = list(
+            re.finditer(
+                r"[.!?…](?:[\"'»”)]*)?(?=\s|$)",
+                text,
+            )
+        )
+
+        if not matches:
+            if force:
+                return text, ""
+
+            return None, buffer
+
+        # ---------------------------------------------------------
+        # Queremos agrupar algumas frases antes de falar.
+        #
+        # Isso evita:
+        #
+        # "Oi!" -> TTS
+        # "Tudo bem?" -> TTS
+        #
+        # E prefere:
+        #
+        # "Oi! Tudo bem? Como você está?"
+        # -> TTS
+        # ---------------------------------------------------------
+
+        for match in matches:
+            candidate_end = match.end()
+            candidate = text[:candidate_end].strip()
+
+            # Se já temos um bloco razoável, podemos enviar.
+            if len(candidate) >= 120:
+                remaining = text[candidate_end:].strip()
+                return candidate, remaining
+
+        # ---------------------------------------------------------
+        # Se existe uma resposta curta, junta todas as frases
+        # disponíveis que chegaram até agora.
+        # ---------------------------------------------------------
+
+        last_match = matches[-1]
+        candidate_end = last_match.end()
+
+        candidate = text[:candidate_end].strip()
+
+        # Se já chegou uma quantidade razoável de texto,
+        # fala o bloco inteiro.
+        if len(candidate) >= 60:
+            remaining = text[candidate_end:].strip()
+            return candidate, remaining
+
+        # ---------------------------------------------------------
+        # Se o modelo terminou a resposta, não deixa sobra sem falar.
+        # ---------------------------------------------------------
+
+        if force:
+            remaining = text[candidate_end:].strip()
+
+            if remaining:
+                return candidate, remaining
+
+            return candidate, ""
+
+        return None, buffer
+
+    # =============================================================
     # STREAMING → TTS
     # =============================================================
 
@@ -719,17 +769,23 @@ class TextToSpeech:
         chunks,
     ):
         """
-        Converte o streaming do LLM em frases completas para o TTS.
+        Recebe chunks do LLM e transforma o texto em blocos naturais
+        para o TTS.
 
-        NÃO corta a fala por quantidade arbitrária de caracteres.
+        Diferente da versão anterior, não envia uma requisição Fish
+        para cada frase curta.
 
-        O buffer só é enviado ao TTS quando encontra:
-            .
-            !
-            ?
-            …
+        Exemplo:
 
-        Isso evita cortar frases no meio.
+            "Oi! "
+            "Tudo bem? "
+            "O que você está fazendo?"
+
+        vira preferencialmente:
+
+            "Oi! Tudo bem? O que você está fazendo?"
+
+        Isso reduz as pausas artificiais entre frases.
         """
 
         self.stopped = False
@@ -738,85 +794,64 @@ class TextToSpeech:
         collected = []
         buffer = ""
 
-        # Pontuação que realmente encerra uma frase.
-        sentence_endings = (
-            ".",
-            "!",
-            "?",
-            "…",
-        )
-
         for chunk in chunks:
-
             if self.stopped:
                 break
 
             if not chunk:
                 continue
 
-            print(
+            ui.console.print(
                 chunk,
+                style="agent",
                 end="",
-                flush=True,
+                highlight=False,
             )
 
             collected.append(chunk)
-
             buffer += chunk
 
             # -----------------------------------------------------
-            # Procura frases completas dentro do buffer.
+            # Extrai blocos completos enquanto possível.
             # -----------------------------------------------------
 
-            while True:
-
-                if self.stopped:
-                    break
-
-                end_index = -1
-
-                for index, char in enumerate(buffer):
-
-                    if char in sentence_endings:
-
-                        end_index = index
-                        break
-
-                # Ainda não terminou nenhuma frase.
-                if end_index == -1:
-                    break
-
-                # Inclui a pontuação.
-                sentence = (
-                    buffer[:end_index + 1]
-                    .strip()
+            while not self.stopped:
+                block, remaining = self._extract_speech_block(
+                    buffer
                 )
 
-                # Mantém o restante.
-                buffer = (
-                    buffer[end_index + 1:]
-                )
+                if block is None:
+                    break
 
-                if sentence:
+                buffer = remaining
 
+                if block.strip():
                     self.speak(
-                        sentence
+                        block.strip()
                     )
 
         # ---------------------------------------------------------
-        # O modelo terminou o streaming.
+        # Fim da resposta.
         #
-        # Se sobrou texto sem pontuação, fala o restante inteiro.
-        # NÃO joga fora o final da resposta.
+        # Não deixa texto sobrando.
         # ---------------------------------------------------------
 
-        if (
+        while (
             buffer.strip()
             and not self.stopped
         ):
+            block, remaining = self._extract_speech_block(
+                buffer,
+                force=True,
+            )
+
+            if not block:
+                break
+
+            buffer = remaining
 
             self.speak(
-                buffer.strip()
+                block.strip()
             )
 
         return (
@@ -831,7 +866,6 @@ class TextToSpeech:
     # =============================================================
 
     def stop(self):
-
         self.stopped = True
 
         self._interrupt_requested.set()

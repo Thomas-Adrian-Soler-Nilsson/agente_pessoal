@@ -2,6 +2,7 @@ import json
 import time
 from typing import Callable
 
+from ui import ui
 from memory.temporal_memory import TemporalMemory
 
 
@@ -70,6 +71,10 @@ mais de uma palavra e deve receber apenas os termos importantes do nome.
 Sem pasta específica, use path "~" para procurar nas pastas permitidas.
 Se encontrar o arquivo, use read_file com o caminho retornado.
 Use list_directory para mostrar o conteúdo de uma pasta.
+
+Use generate_image quando Thomas pedir para criar, gerar ou desenhar uma
+imagem. Escreva um prompt descritivo e detalhado (de preferência em
+inglês) a partir do pedido dele.
 
 Considere sempre o resultado da ferramenta como a fonte da verdade.
 Nunca invente nomes, tipos ou conteúdos de arquivos.
@@ -166,6 +171,24 @@ def build_tools():
             "Captura uma imagem atual da webcam.",
             {},
             [],
+        ),
+        (
+            "generate_image",
+            (
+                "Gera uma imagem a partir de uma descrição em texto usando "
+                "a API de geração de imagens da Hugging Face, salva o "
+                "arquivo localmente e abre para visualização."
+            ),
+            {
+                "prompt": {
+                    "type": "string",
+                    "description": (
+                        "Descrição detalhada da imagem a ser gerada. "
+                        "Prefira descrever em inglês para melhores resultados."
+                    ),
+                }
+            },
+            ["prompt"],
         ),
 
         # ========================================================
@@ -406,8 +429,8 @@ class CompatibleAgent:
                     self._is_too_large(error)
                     and attempt == 0
                 ):
-                    print(
-                        "\n⚠️ Pedido grande demais. "
+                    ui.warn(
+                        "Pedido grande demais. "
                         "Enviando um resumo menor do contexto..."
                     )
 
@@ -428,8 +451,8 @@ class CompatibleAgent:
                 ):
                     raise
 
-                print(
-                    "\n⚠️ Limite temporário atingido. "
+                ui.warn(
+                    "Limite temporário atingido. "
                     "Tentando novamente em 5 segundos..."
                 )
 
@@ -493,9 +516,9 @@ class CompatibleAgent:
             importance=importance,
         )
 
-        print(
-            f"\n🧠 IA → memória salva "
-            f"[{memory['category']}]"
+        ui.console.print(
+            f"\n[info]🧠 IA → memória salva[/info] "
+            f"[muted]\\[{memory['category']}][/muted]"
         )
 
         return (
@@ -547,8 +570,8 @@ class CompatibleAgent:
         )
 
         if not memories:
-            print(
-                f"\n🧠 IA → memória: "
+            ui.console.print(
+                f"\n[info]🧠 IA → memória:[/info] "
                 f"nenhum resultado para '{query}'"
             )
 
@@ -557,8 +580,8 @@ class CompatibleAgent:
                 f"para: {query}"
             )
 
-        print(
-            f"\n🧠 IA → memória: "
+        ui.console.print(
+            f"\n[info]🧠 IA → memória:[/info] "
             f"{len(memories)} resultado(s)"
         )
 
@@ -655,8 +678,8 @@ class CompatibleAgent:
                     f"{call.function.name}: {error}"
                 )
 
-            print(
-                f"\n🔧 IA → {call.function.name}()"
+            ui.console.print(
+                f"\n[info]🔧 IA →[/info] [bold]{call.function.name}()[/bold]"
             )
 
             # ========================================================

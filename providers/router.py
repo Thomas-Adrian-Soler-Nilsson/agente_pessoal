@@ -1,3 +1,4 @@
+from ui import ui
 from .groq_provider import GroqAgent
 from .nvidia_provider import NvidiaAgent, available_models as nvidia_models
 from .openrouter_provider import OpenRouterAgent, available_models as openrouter_models
@@ -43,7 +44,7 @@ class AutomaticAgent:
             yield from self.current.ask_stream(text)
             return
         except Exception as error:
-            print(f"\n⚠️ Groq falhou: {error}")
+            ui.warn(f"Groq falhou: {error}")
         candidates = [self.openrouter_model] if self.openrouter_model else []
         candidates.extend(model for model in openrouter_models() if model not in candidates)
         for model in candidates:
@@ -54,7 +55,7 @@ class AutomaticAgent:
                 yield from self.current.ask_stream(text)
                 return
             except Exception as error:
-                print(f"\n⚠️ OpenRouter ({model}) falhou: {error}")
+                ui.warn(f"OpenRouter ({model}) falhou: {error}")
 
         candidates = [self.nvidia_model] if self.nvidia_model else []
         candidates.extend(model for model in nvidia_models() if model not in candidates)
@@ -66,6 +67,6 @@ class AutomaticAgent:
                 yield from self.current.ask_stream(text)
                 return
             except Exception as error:
-                print(f"\n⚠️ NVIDIA ({model}) falhou: {error}")
+                ui.warn(f"NVIDIA ({model}) falhou: {error}")
 
         yield "Os provedores de IA estão indisponíveis agora."

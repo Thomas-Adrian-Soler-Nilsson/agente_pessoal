@@ -5,6 +5,8 @@ from typing import Callable
 from dotenv import load_dotenv
 from groq import Groq
 
+from ui import ui
+
 
 load_dotenv()
 
@@ -227,8 +229,8 @@ class Agent:
             except json.JSONDecodeError:
                 arguments = {}
 
-            print(
-                f"\n🔧 IA → {name}()"
+            ui.console.print(
+                f"\n[info]🔧 IA →[/info] [bold]{name}()[/bold]"
             )
 
             result = (

@@ -3,11 +3,13 @@ import os
 
 from dotenv import load_dotenv
 
+from ui import ui
 from gemini_live.client import GeminiLive
 from providers.router import ProviderRouter
 from screen.screen import Screen
 from tools.computer import ComputerTools
 from tools.files import FileTools
+from tools.image_generation import ImageGenerator
 from webcam.webcam import Webcam
 
 load_dotenv()
@@ -19,6 +21,7 @@ class LocalToolExecutor:
         self.webcam = webcam
         self.computer = ComputerTools()
         self.files = FileTools()
+        self.images = ImageGenerator()
 
     def execute(self, name, arguments):
         if name == "open_application":
@@ -39,34 +42,36 @@ class LocalToolExecutor:
             return {"type": "image", "data": self.screen.capture(), "description": "Captura atual da tela."}
         if name == "capture_webcam":
             return {"type": "image", "data": self.webcam.capture(), "description": "Captura atual da webcam."}
+        if name == "generate_image":
+            return self.images.generate(arguments.get("prompt", ""))
         return f"Ferramenta desconhecida: {name}"
 
 
 def select_model(provider_name, models, configured_model):
-    print(f"\nModelos {provider_name}:")
-    for index, model in enumerate(models, 1):
-        marker = " (configurado)" if model == configured_model else ""
-        print(f"[{index}] {model}{marker}")
+    rows = [
+        {"label": model, "tag": "(configurado)" if model == configured_model else None}
+        for model in models
+    ]
+    ui.menu_table(f"Modelos {provider_name}", rows)
     while True:
-        choice = input(f"Escolha o modelo [1-{len(models)}] (Enter mantém configuração): ").strip()
+        choice = ui.prompt(f"Escolha o modelo [1-{len(models)}] (Enter mantém configuração):")
+        choice = choice.strip()
         if not choice:
             return configured_model or models[0]
         if choice.isdigit() and 1 <= int(choice) <= len(models):
             return models[int(choice) - 1]
-        print("❌ Escolha inválida.")
+        ui.error("Escolha inválida.")
 
 
 def _prompt_choice(title, options):
-    print(f"\n{title}")
-    for index, option in enumerate(options, 1):
-        print(f"[{index}] {option['label']}")
-        print(f"    {option['description']}")
+    rows = [{"label": option["label"], "description": option["description"]} for option in options]
+    ui.menu_table(title, rows)
     valid = {str(index) for index in range(1, len(options) + 1)}
     while True:
-        choice = input(f"Escolha [1-{len(options)}]: ").strip()
+        choice = ui.prompt(f"Escolha [1-{len(options)}]:").strip()
         if choice in valid:
             return options[int(choice) - 1]["id"]
-        print("❌ Escolha inválida.")
+        ui.error("Escolha inválida.")
 
 
 def _has_key(*names):
@@ -131,19 +136,16 @@ def select_fish_voice():
     from audio.text_to_speech import available_fish_voices
 
     voices = available_fish_voices()
-    print("\nVozes Fish Audio:")
-    for index, (name, voice_id) in enumerate(voices, 1):
-        print(f"[{index}] {name} ({voice_id})")
+    rows = [{"label": f"{name}", "description": voice_id} for name, voice_id in voices]
+    ui.menu_table("Vozes Fish Audio", rows)
 
     while True:
-        choice = input(
-            f"Escolha a voz [1-{len(voices)}] (Enter mantém a primeira): "
-        ).strip()
+        choice = ui.prompt(f"Escolha a voz [1-{len(voices)}] (Enter mantém a primeira):").strip()
         if not choice:
             return voices[0][1]
         if choice.isdigit() and 1 <= int(choice) <= len(voices):
             return voices[int(choice) - 1][1]
-        print("❌ Escolha inválida.")
+        ui.error("Escolha inválida.")
 
 
 def _require_audio_keys(stt_provider, tts_provider):
@@ -172,7 +174,8 @@ def run_text_provider(provider_name, agent, stt_provider, tts_provider, fish_voi
     )
     if tts_provider == "fish":
         agent.set_personality(fish_voice_personality(fish_voice_id))
-    print(f"\n✅ {provider_name} pronto. Fale normalmente.\n")
+    ui.module_header(provider_name, icon="💬")
+    ui.ok("Pronto. Fale normalmente.")
     recent_context = []
     try:
         while True:
@@ -180,23 +183,24 @@ def run_text_provider(provider_name, agent, stt_provider, tts_provider, fish_voi
             text = stt.transcribe(audio_file, context=" | ".join(recent_context[-3:])).strip()
             if not text:
                 continue
-            print(f"\nVocê: {text}")
+            ui.user_line(text)
             if text.lower() in {"sair", "encerrar", "tchau", "desligar"}:
                 tts.speak("Até mais.")
                 break
-            print("Agente: ", end="", flush=True)
+            ui.agent_prefix()
             try:
-                interrupted, spoken = tts.speak_stream(agent.ask_stream(text))
-                print()
+                was_interrupted, spoken = tts.speak_stream(agent.ask_stream(text))
+                ui.console.print()
                 recent_context.append(f"Usuário: {text}")
                 if spoken:
                     recent_context.append(f"Agente: {spoken[:240]}")
-                if interrupted:
-                    print("🛑 Interrompido.")
+                if was_interrupted:
+                    ui.interrupted()
             except Exception as error:
-                print(f"\n❌ Erro: {error}")
+                ui.error(f"Erro: {error}")
     except KeyboardInterrupt:
-        print("\nEncerrando...")
+        ui.console.print()
+        ui.warn("Encerrando...")
     finally:
         tts.stop()
 
@@ -206,16 +210,19 @@ def menu():
     from providers.nvidia_provider import available_models as nvidia_models
     from providers.openrouter_provider import available_models as openrouter_models
 
-    print("\n======================================\n           AGENTE PESSOAL\n======================================\n")
-    print("[1] Gemini Live\n")
-    print("[2] Groq\n    ├── seleção de modelo")
-    print("[3] OpenRouter\n    ├── seleção de modelo")
-    print("[4] NVIDIA\n    ├── seleção de modelo")
-    print("[5] Automático\n")
-    choice = input("Escolha [1-5]: ").strip()
+    ui.banner()
+    rows = [
+        {"label": "Gemini Live", "description": "voz nativa, tela e webcam em tempo real"},
+        {"label": "Groq", "description": "STT/TTS local · seleção de modelo"},
+        {"label": "OpenRouter", "description": "STT/TTS local · seleção de modelo"},
+        {"label": "NVIDIA", "description": "STT/TTS local · seleção de modelo"},
+        {"label": "Automático", "description": "tenta Groq → OpenRouter → NVIDIA"},
+    ]
+    ui.menu_table("Modo", rows)
+    choice = ui.prompt("Escolha [1-5]:").strip()
     while choice not in {"1", "2", "3", "4", "5"}:
-        print("❌ Escolha inválida.")
-        choice = input("Escolha [1-5]: ").strip()
+        ui.error("Escolha inválida.")
+        choice = ui.prompt("Escolha [1-5]:").strip()
     if choice == "2":
         model = select_model("Groq", groq_models(), os.getenv("GROQ_MODEL"))
         return choice, model, None, None
@@ -253,9 +260,9 @@ def run():
                     fish_voice_id=fish_voice_id,
                     provider=tts_provider,
                 )
-                print("\nEscuta: Gemini nativo  |  Fala: biblioteca/API escolhida")
+                ui.status("Escuta: Gemini nativo  |  Fala: biblioteca/API escolhida")
             else:
-                print("\nEscuta e fala: nativas do Gemini Live")
+                ui.status("Escuta e fala: nativas do Gemini Live")
             agent = GeminiLive(screen=screen, webcam=webcam, tts=external_tts)
             asyncio.run(agent.run())
         else:
@@ -277,12 +284,12 @@ def run():
             else:
                 agent = router.automatic(groq_model, openrouter_model, nvidia_model)
                 label = "Modo automático"
-            print(f"\nSTT: {stt_provider}  |  TTS: {tts_provider}")
+            ui.status(f"STT: {stt_provider}  |  TTS: {tts_provider}")
             run_text_provider(label, agent, stt_provider, tts_provider, fish_voice_id)
     except KeyboardInterrupt:
-        print("\nEncerrando agente...")
+        ui.warn("Encerrando agente...")
     except Exception as error:
-        print(f"\n❌ Erro: {error}")
+        ui.error(f"Erro: {error}")
     finally:
         if choice == "1" and agent is not None:
             agent.close()

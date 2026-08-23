@@ -4,6 +4,8 @@ import wave
 import numpy as np
 import sounddevice as sd
 
+from ui import ui
+
 
 class Microphone:
     def __init__(
@@ -24,7 +26,7 @@ class Microphone:
         self.pre_roll = float(os.getenv("MIC_PRE_ROLL", "0.55"))
 
     def record(self, output_file: str = "audio.wav") -> str:
-        print("🎤 Ouvindo...")
+        ui.console.print("[info]🎤 Ouvindo...[/info]")
 
         chunks = []
         pre_buffer = []

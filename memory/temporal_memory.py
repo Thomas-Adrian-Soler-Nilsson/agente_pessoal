@@ -1,9 +1,27 @@
 import json
 import os
+import unicodedata
 import uuid
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
+
+from ui import ui
+
+# Palavras muito comuns que quase nunca ajudam a diferenciar uma busca.
+# Sao ignoradas na comparacao, mas nao no calculo de similaridade caso
+# nao sobre nenhuma palavra relevante na frase.
+STOPWORDS = {
+    "a", "o", "as", "os", "de", "da", "do", "das", "dos", "um", "uma",
+    "uns", "umas", "e", "é", "ou", "que", "com", "para", "por", "em",
+    "no", "na", "nos", "nas", "sobre", "como", "isso", "essa", "esse",
+    "esses", "essas", "este", "esta", "estes", "estas", "meu", "minha",
+    "meus", "minhas", "seu", "sua", "seus", "suas", "eu", "voce", "ele",
+    "ela", "eles", "elas", "ao", "aos", "se", "ja", "mais", "muito",
+    "tambem", "foi", "ser", "tem", "tinha", "estava", "esta", "estou",
+    "fica", "ficou", "quero", "queria", "pode", "poderia", "vai", "vou",
+}
 
 
 class TemporalMemory:
@@ -82,8 +100,8 @@ class TemporalMemory:
             json.JSONDecodeError,
             OSError,
         ):
-            print(
-                "⚠️ Não foi possível ler a memória temporal. "
+            ui.warn(
+                "Não foi possível ler a memória temporal. "
                 "Iniciando uma memória nova."
             )
 
@@ -126,8 +144,8 @@ class TemporalMemory:
             )
 
         except OSError as error:
-            print(
-                f"⚠️ Erro ao salvar memória temporal: {error}"
+            ui.error(
+                f"Erro ao salvar memória temporal: {error}"
             )
 
             try:
@@ -148,9 +166,26 @@ class TemporalMemory:
 
     @staticmethod
     def _normalize(text: str) -> str:
-        return " ".join(
-            str(text).strip().lower().split()
-        )
+        text = str(text).strip().lower()
+        text = unicodedata.normalize("NFKD", text)
+        text = "".join(char for char in text if not unicodedata.combining(char))
+        return " ".join(text.split())
+
+    @staticmethod
+    def _words_match(query_word: str, candidate_word: str) -> bool:
+        """Compara duas palavras de forma tolerante a plural/conjugação.
+
+        Aceita: match exato, prefixo comum (radical) e alta similaridade
+        (para pequenos erros de transcrição de voz).
+        """
+        if query_word == candidate_word:
+            return True
+        if len(query_word) >= 4 and len(candidate_word) >= 4:
+            if query_word.startswith(candidate_word) or candidate_word.startswith(query_word):
+                return True
+            if SequenceMatcher(None, query_word, candidate_word).ratio() >= 0.84:
+                return True
+        return False
 
     @staticmethod
     def _memory_text(memory: dict[str, Any]) -> str:
@@ -241,10 +276,11 @@ class TemporalMemory:
         limit: int = 8,
     ) -> list[dict[str, Any]]:
         """
-        Procura memórias relevantes usando correspondência simples
-        de palavras.
+        Procura memórias relevantes de forma tolerante.
 
-        Não utiliza embeddings nem APIs externas nesta primeira versão.
+        Ignora acentos, ignora palavras muito comuns (stopwords) e aceita
+        pequenas variações de palavra (plural, conjugação, erro de STT)
+        via radical comum e similaridade de texto.
         """
 
         query = self._normalize(query)
@@ -252,9 +288,10 @@ class TemporalMemory:
         if not query:
             return []
 
-        query_words = set(
-            query.split()
-        )
+        raw_words = query.split()
+        query_words = [word for word in raw_words if word not in STOPWORDS]
+        if not query_words:
+            query_words = raw_words
 
         results = []
 
@@ -267,24 +304,22 @@ class TemporalMemory:
                 memory.get("category", "")
             )
 
-            searchable = (
-                f"{content} {category}"
-            )
-
             searchable_words = set(
-                searchable.split()
+                f"{content} {category}".split()
             )
 
-            matches = len(
-                query_words & searchable_words
-            )
+            matched = 0
+            for query_word in query_words:
+                if any(
+                    self._words_match(query_word, candidate)
+                    for candidate in searchable_words
+                ):
+                    matched += 1
 
-            if matches == 0:
+            if matched == 0:
                 continue
 
-            score = (
-                matches / max(len(query_words), 1)
-            )
+            score = matched / max(len(query_words), 1)
 
             # Memórias importantes recebem pequena prioridade.
             score += (
