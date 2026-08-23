@@ -59,3 +59,6 @@ class NvidiaAgent:
 
     def ask_stream(self, text: str):
         return self.agent.ask_stream(text)
+
+    def set_personality(self, personality: str):
+        self.agent.set_personality(personality)

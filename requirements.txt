@@ -9,5 +9,7 @@ Pillow==12.3.0
 PyAutoGUI==0.9.54
 pygame==2.6.1
 python-dotenv==1.2.3
+pypdf==6.7.5
+python-docx==1.2.0
 requests==2.32.5
 sounddevice==0.5.6

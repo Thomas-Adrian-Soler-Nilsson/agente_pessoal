@@ -1,6 +1,7 @@
 import os
 import shutil
 import subprocess
+import unicodedata
 import webbrowser
 
 
@@ -25,6 +26,9 @@ class ComputerTools:
             "code",
             "visual studio code",
         ],
+        "vs code": [
+            "code",
+        ],
         "visual studio code": [
             "code",
         ],
@@ -47,6 +51,12 @@ class ComputerTools:
         "file explorer": [
             "explorer",
         ],
+        "explorador de arquivos": [
+            "explorer",
+        ],
+        "gerenciador de tarefas": [
+            "taskmgr",
+        ],
 
         # Outros
         "discord": [
@@ -66,11 +76,9 @@ class ComputerTools:
         application: str,
     ) -> str:
 
-        name = (
-            application
-            .strip()
-            .lower()
-        )
+        name = self._normalize_name(application)
+        if not name:
+            return "Informe qual aplicativo devo abrir."
 
         candidates = (
             self.APP_ALIASES.get(
@@ -151,15 +159,23 @@ class ComputerTools:
             return "Abrir pastas pelo Explorador só está disponível no Windows."
 
         value = os.path.expandvars(os.path.expanduser(path.strip().strip('"')))
+        if not value:
+            return "Informe qual pasta devo abrir."
         aliases = {
             "downloads": os.path.join(os.path.expanduser("~"), "Downloads"),
             "download": os.path.join(os.path.expanduser("~"), "Downloads"),
+            "meus downloads": os.path.join(os.path.expanduser("~"), "Downloads"),
+            "pasta downloads": os.path.join(os.path.expanduser("~"), "Downloads"),
             "onedrive\\downloads": os.path.join(os.path.expanduser("~"), "OneDrive", "Downloads"),
             "unidrive\\downloads": os.path.join(os.path.expanduser("~"), "OneDrive", "Downloads"),
+            "anidrive\\downloads": os.path.join(os.path.expanduser("~"), "OneDrive", "Downloads"),
+            "anidriving\\downloads": os.path.join(os.path.expanduser("~"), "OneDrive", "Downloads"),
             "onedrive": os.path.join(os.path.expanduser("~"), "OneDrive"),
             "unidrive": os.path.join(os.path.expanduser("~"), "OneDrive"),
+            "anidrive": os.path.join(os.path.expanduser("~"), "OneDrive"),
+            "anidriving": os.path.join(os.path.expanduser("~"), "OneDrive"),
         }
-        alias = value.replace("/", "\\").strip("\\").lower()
+        alias = self._normalize_name(value.replace("/", "\\").strip("\\"))
         directory = aliases.get(alias, value)
         if not os.path.isdir(directory):
             return f"A pasta '{path}' não existe ou não está disponível."
@@ -174,6 +190,12 @@ class ComputerTools:
             return f"Abri a pasta '{directory}' no Explorador de Arquivos."
         except Exception as error:
             return f"Não consegui abrir a pasta '{path}': {error}"
+
+    @staticmethod
+    def _normalize_name(value: str) -> str:
+        value = unicodedata.normalize("NFKD", value)
+        value = "".join(char for char in value if not unicodedata.combining(char))
+        return " ".join(value.strip().lower().split())
 
     def open_url(
         self,

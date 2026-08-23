@@ -59,6 +59,15 @@ TTS_INTERRUPT_THRESHOLD=0.08
 
 Valores maiores reduzem interrupcoes causadas pelo ruido ou pelo proprio alto-falante.
 
+Para evitar que o som do proprio computador interrompa a resposta, a interrupcao por voz fica desativada por padrao. Para reativar:
+
+```env
+TTS_INTERRUPT_ENABLED=true
+TTS_INTERRUPT_DELAY=0.7
+```
+
+Durante uma resposta falada, pressione `Esc` para interromper imediatamente sem encerrar o agente. A interrupcao por voz pode ser ativada nas variaveis acima.
+
 O TTS usa Edge TTS por padrao. Para usar Fish Audio, instale as dependencias e configure:
 
 ```env
@@ -69,6 +78,8 @@ FISH_MODEL=s2.1-pro-free
 ```
 
 Ao iniciar uma sessao com Fish Audio, o agente exibe as vozes configuradas e permite escolher uma. Use `FISH_VOICES` no formato `Nome=reference_id`, separado por virgulas. Para voltar ao Edge TTS, use `TTS_PROVIDER=edge` ou remova essa variavel. O texto enviado ao Fish Audio preserva tags de emocao, como `[excited]`.
+
+A ferramenta de leitura extrai texto de arquivos `.txt`, `.md`, codigo, `.pdf` e `.docx`. PDFs escaneados que contem apenas imagens precisam de OCR e ainda nao sao extraidos automaticamente.
 
 ## Ferramentas locais
 

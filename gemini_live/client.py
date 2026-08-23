@@ -120,6 +120,9 @@ use open_application.
 
 Você pode entender nomes naturais dos aplicativos.
 
+Se Thomas pedir para abrir uma pasta no Explorador,
+use open_directory. Para Downloads, use "Downloads".
+
 ========================================
 ARQUIVOS
 ========================================
@@ -241,6 +244,25 @@ FUNCTION_DECLARATIONS = [
     },
 
     {
+        "name": "open_directory",
+        "description": (
+            "Abre uma pasta no Explorador de Arquivos."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Caminho da pasta, como Downloads.",
+                }
+            },
+            "required": [
+                "path"
+            ],
+        },
+    },
+
+    {
         "name": "list_directory",
         "description": (
             "Lista os arquivos e pastas de um diretório."
@@ -285,7 +307,7 @@ FUNCTION_DECLARATIONS = [
     {
         "name": "read_file",
         "description": (
-            "Lê o conteúdo de um arquivo de texto."
+            "Lê o conteúdo extraível de arquivos de texto, PDF e DOCX."
         ),
         "parameters": {
             "type": "object",
@@ -383,6 +405,7 @@ class GeminiLive:
         self,
         screen,
         webcam,
+        tts=None,
     ):
 
         api_key = os.getenv(
@@ -422,6 +445,7 @@ class GeminiLive:
 
         self.input_stream = None
         self.audio_output = None
+        self.external_tts = tts
 
         self.input_transcript = ""
         self.output_transcript = ""
@@ -477,6 +501,18 @@ class GeminiLive:
                             arguments.get(
                                 "url",
                                 "",
+                            )
+                        )
+                    )
+
+                elif name == "open_directory":
+
+                    result = (
+                        self.computer
+                        .open_directory(
+                            arguments.get(
+                                "path",
+                                "~",
                             )
                         )
                     )
@@ -829,7 +865,7 @@ class GeminiLive:
             dtype=np.int16,
         )
 
-        if not len(samples):
+        if not len(samples) or self.external_tts is not None:
             return
 
         if self.audio_output is None:
@@ -897,6 +933,8 @@ class GeminiLive:
                 if server.interrupted:
 
                     self._stop_audio()
+                    if self.external_tts is not None:
+                        self.external_tts.stop()
 
                     self.output_transcript = ""
 
@@ -977,6 +1015,11 @@ class GeminiLive:
                             f"Agente: "
                             f"{self.output_transcript.strip()}"
                         )
+                        if self.external_tts is not None:
+                            await asyncio.to_thread(
+                                self.external_tts.speak,
+                                self.output_transcript.strip(),
+                            )
 
                     self.input_transcript = ""
                     self.output_transcript = ""
@@ -1131,5 +1174,7 @@ class GeminiLive:
         )
 
         self._stop_audio()
+        if self.external_tts is not None:
+            self.external_tts.stop()
 
         self.session = None

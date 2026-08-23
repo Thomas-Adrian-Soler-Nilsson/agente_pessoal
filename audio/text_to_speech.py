@@ -5,10 +5,16 @@ import tempfile
 import threading
 import time
 
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
+
 import edge_tts
 import numpy as np
 import requests
 import sounddevice as sd
+import wave
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
@@ -25,6 +31,18 @@ DEFAULT_FISH_VOICES = [
     ("Fluttershy", "3351971c57f64d14ada2628fdc770112"),
     ("Anya", "ffe41701970d4b339ef7906300716f99"),
 ]
+
+FISH_VOICE_PERSONALITIES = {
+    "Goku": "Persona inspirada em um herói shonen alegre e determinado. Fale com energia, otimismo e curiosidade, trate desafios como treinamento e incentive o usuário. Seja simples e espontâneo; evite formalidade e complexidade desnecessária.",
+    "Lula": "Persona inspirada no estilo público de um líder sindical e político brasileiro. Fale de modo caloroso, popular e persuasivo, usando exemplos do cotidiano e valorizando diálogo e inclusão.",
+    "Bolsonaro": "Persona inspirada no estilo público de um político brasileiro de fala direta. Seja objetivo, informal e assertivo, com humor seco quando couber.",
+    "São Cipriano": "Persona inspirada em uma figura tradicional de misticismo popular. Fale com serenidade, solenidade e um toque enigmático, oferecendo conselhos práticos e respeitosos.",
+    "Isabela": "Persona de uma mulher brasileira acolhedora, perspicaz e confiante. Fale com calma, empatia e clareza, percebendo nuances e ajudando o usuário a organizar as ideias sem soar formal demais.",
+    "Capitão Nascimento": "Persona inspirada em um instrutor militar fictício, disciplinado e exigente. Seja firme, direto e pragmático, transforme tarefas em objetivos claros e cobre foco sem humilhar, ameaçar ou incentivar violência.",
+    "Loli": "Persona de uma personagem jovem fictícia, fofa e muito animada. Use linguagem leve, curiosidade e entusiasmo, mantendo conteúdo apropriado e sem sexualização. Não afirme ser uma personagem existente.",
+    "Fluttershy": "Persona inspirada em uma personagem fictícia gentil e tímida. Fale suavemente, com empatia e carinho por animais e pessoas, mas demonstre coragem quando necessário.",
+    "Anya": "Persona inspirada em uma personagem infantil fictícia, expressiva e brincalhona. Use frases curtas, curiosidade e humor inocente, mantendo o conteúdo apropriado para todas as idades.",
+}
 
 
 def available_fish_voices():
@@ -45,27 +63,70 @@ def available_fish_voices():
     return DEFAULT_FISH_VOICES
 
 
+def fish_voice_personality(voice_id: str | None) -> str:
+    selected_name = ""
+    for name, configured_id in DEFAULT_FISH_VOICES:
+        if configured_id == voice_id:
+            selected_name = name
+            break
+    for name, configured_id in available_fish_voices():
+        if configured_id == voice_id:
+            selected_name = name
+            break
+    if not selected_name:
+        return ""
+    return (
+        f"A persona escolhida para esta sessão é {selected_name}. "
+        f"Você é {selected_name} durante a interpretação. "
+        "Responda em primeira pessoa como essa persona e mantenha sua identidade, "
+        "vocabulário e atitude em todas as respostas. Não diga que é um agente, "
+        "assistente pessoal, modelo de IA ou sistema; se perguntarem quem você é, "
+        f"responda que é {selected_name}. "
+        + FISH_VOICE_PERSONALITIES.get(selected_name, "")
+        + " Use marcadores de emoção do Fish Audio no texto que será falado: "
+        "[happy], [excited], [calm], [empathetic], [curious], [confident], "
+        "[laughing], [sighing], [whispering] ou [surprised]. "
+        "Coloque o marcador no começo da frase que ele deve influenciar, use "
+        "no máximo um ou dois por frase, escolha a emoção de acordo com o contexto "
+        "e não escreva explicações sobre os marcadores. Os marcadores são instruções "
+        "para a voz e não devem ser pronunciados como palavras."
+    )
+
+
 class TextToSpeech:
     def __init__(
         self,
         voice: str = "pt-BR-AntonioNeural",
         rate: str = "+0%",
         fish_voice_id: str | None = None,
+        provider: str | None = None,
     ):
         self.voice = voice
         self.rate = rate
-        self.provider = os.getenv("TTS_PROVIDER", "edge").strip().lower()
-        if self.provider not in {"edge", "fish"}:
-            raise ValueError("TTS_PROVIDER deve ser 'edge' ou 'fish'")
+        self.provider = (provider or os.getenv("TTS_PROVIDER", "edge")).strip().lower()
+        if self.provider not in {"edge", "fish", "gemini"}:
+            raise ValueError("TTS_PROVIDER deve ser 'edge', 'fish' ou 'gemini'")
         self.fish_api_key = os.getenv("FISH_API_KEY") or os.getenv("FISH_API")
         self.fish_voice_id = fish_voice_id or os.getenv("FISH_VOICE_ID") or os.getenv("FISH_REFERENCE_ID")
         self.fish_model = os.getenv("FISH_MODEL", "s2.1-pro-free")
+        self.gemini_api_key = os.getenv("GEMINI_API_KEY")
+        self.gemini_tts_model = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
+        self.gemini_tts_voice = os.getenv("GEMINI_TTS_VOICE", "Kore")
         self.stopped = False
+        self.interrupt_enabled = os.getenv("TTS_INTERRUPT_ENABLED", "false").strip().lower() in {
+            "1",
+            "true",
+            "sim",
+            "yes",
+        }
+        self._interrupt_requested = threading.Event()
+        self.interrupt_delay = float(os.getenv("TTS_INTERRUPT_DELAY", "0.7"))
         self.interrupt_threshold = float(
             os.getenv("TTS_INTERRUPT_THRESHOLD", "0.08")
         )
         self._monitor_stop = threading.Event()
         self._monitor_thread = None
+        self._keyboard_thread = None
         pygame.mixer.init()
 
     @staticmethod
@@ -80,8 +141,10 @@ class TextToSpeech:
             " link ",
             text,
         )
-        punctuation = r"[`*_#|]" if not keep_fish_tags else r"[`*_#|]"
+        punctuation = r"[`*_#|]"
         text = re.sub(punctuation, " ", text)
+        if not keep_fish_tags:
+            text = re.sub(r"\[[^\]]+\]", " ", text)
         text = re.sub(r"[\\/]", " ", text)
         text = re.sub(r"[-]{2,}", " ", text)
         text = re.sub(r"\s+", " ", text)
@@ -91,6 +154,9 @@ class TextToSpeech:
         if self.provider == "fish":
             self._synthesize_fish(text, output_file)
             return
+        if self.provider == "gemini":
+            self._synthesize_gemini(text, output_file)
+            return
 
         communicate = edge_tts.Communicate(
             text,
@@ -98,6 +164,42 @@ class TextToSpeech:
             rate=self.rate,
         )
         await communicate.save(output_file)
+
+    def _synthesize_gemini(self, text: str, output_file: str):
+        if not self.gemini_api_key:
+            raise ValueError("GEMINI_API_KEY não encontrada no .env")
+
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=self.gemini_api_key)
+        response = client.models.generate_content(
+            model=self.gemini_tts_model,
+            contents=text,
+            config=types.GenerateContentConfig(
+                response_modalities=["AUDIO"],
+                speech_config=types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                            voice_name=self.gemini_tts_voice
+                        )
+                    )
+                ),
+            ),
+        )
+        part = response.candidates[0].content.parts[0]
+        blob = part.inline_data
+        data = blob.data
+        mime = (getattr(blob, "mime_type", None) or "").lower()
+        if "wav" in mime or data[:4] == b"RIFF":
+            with open(output_file, "wb") as audio_file:
+                audio_file.write(data)
+            return
+        with wave.open(output_file, "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(24000)
+            wav.writeframes(data)
 
     def _synthesize_fish(self, text: str, output_file: str):
         if not self.fish_api_key:
@@ -153,6 +255,7 @@ class TextToSpeech:
                 speech_frames += 1
                 if speech_frames >= 3:
                     self.stopped = True
+                    self._interrupt_requested.set()
                     self._monitor_stop.set()
             else:
                 speech_frames = 0
@@ -178,11 +281,33 @@ class TextToSpeech:
         )
         self._monitor_thread.start()
 
+    def _monitor_keyboard(self):
+        if msvcrt is None:
+            return
+        while not self._monitor_stop.is_set():
+            if msvcrt.kbhit() and msvcrt.getwch() == "\x1b":
+                self.stopped = True
+                self._interrupt_requested.set()
+                self._monitor_stop.set()
+                pygame.mixer.music.stop()
+                return
+            self._monitor_stop.wait(0.05)
+
+    def _start_keyboard_monitor(self):
+        self._keyboard_thread = threading.Thread(
+            target=self._monitor_keyboard,
+            daemon=True,
+        )
+        self._keyboard_thread.start()
+
     def _stop_microphone_monitor(self):
         self._monitor_stop.set()
         if self._monitor_thread and self._monitor_thread.is_alive():
             self._monitor_thread.join(timeout=0.5)
         self._monitor_thread = None
+        if self._keyboard_thread and self._keyboard_thread.is_alive():
+            self._keyboard_thread.join(timeout=0.5)
+        self._keyboard_thread = None
 
     def speak(self, text: str):
         text = self._speech_text(text, keep_fish_tags=self.provider == "fish")
@@ -190,15 +315,19 @@ class TextToSpeech:
             return
 
         self.stopped = False
+        suffix = ".wav" if self.provider == "gemini" else ".mp3"
         output_file = tempfile.NamedTemporaryFile(
-            suffix=".mp3",
+            suffix=suffix,
             delete=False,
         ).name
         try:
             asyncio.run(self._synthesize(text, output_file))
             pygame.mixer.music.load(output_file)
             pygame.mixer.music.play()
-            self._start_microphone_monitor()
+            self._start_keyboard_monitor()
+            if self.interrupt_enabled:
+                time.sleep(self.interrupt_delay)
+                self._start_microphone_monitor()
             while pygame.mixer.music.get_busy() and not self.stopped:
                 time.sleep(0.05)
             pygame.mixer.music.stop()
@@ -212,6 +341,7 @@ class TextToSpeech:
 
     def speak_stream(self, chunks):
         self.stopped = False
+        self._interrupt_requested.clear()
         collected = []
         sentence = ""
         for chunk in chunks:
@@ -220,7 +350,7 @@ class TextToSpeech:
             print(chunk, end="", flush=True)
             collected.append(chunk)
             sentence += chunk
-            if sentence.rstrip().endswith((".", "!", "?", ":")):
+            if sentence.rstrip().endswith((".", "!", "?", ":")) or len(sentence) >= 280:
                 self.speak(sentence)
                 sentence = ""
         if sentence.strip() and not self.stopped:
@@ -229,5 +359,6 @@ class TextToSpeech:
 
     def stop(self):
         self.stopped = True
+        self._interrupt_requested.set()
         self._monitor_stop.set()
         pygame.mixer.music.stop()

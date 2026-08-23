@@ -28,10 +28,17 @@ class AutomaticAgent:
         self.nvidia_model = nvidia_model
         self.current = None
         self.messages = None
+        self.personality = ""
+
+    def set_personality(self, personality: str):
+        self.personality = personality
+        if self.current is not None:
+            self.current.set_personality(personality)
 
     def ask_stream(self, text: str):
         try:
             self.current = GroqAgent(self.tool_executor, self.groq_model, self.messages)
+            self.current.set_personality(self.personality)
             self.messages = self.current.agent.messages
             yield from self.current.ask_stream(text)
             return
@@ -42,6 +49,7 @@ class AutomaticAgent:
         for model in candidates:
             try:
                 self.current = OpenRouterAgent(self.tool_executor, model, self.messages)
+                self.current.set_personality(self.personality)
                 self.messages = self.current.agent.messages
                 yield from self.current.ask_stream(text)
                 return
@@ -53,6 +61,7 @@ class AutomaticAgent:
         for model in candidates:
             try:
                 self.current = NvidiaAgent(self.tool_executor, model, self.messages)
+                self.current.set_personality(self.personality)
                 self.messages = self.current.agent.messages
                 yield from self.current.ask_stream(text)
                 return

@@ -56,11 +56,79 @@ def select_model(provider_name, models, configured_model):
         print("❌ Escolha inválida.")
 
 
+def _prompt_choice(title, options):
+    print(f"\n{title}")
+    for index, option in enumerate(options, 1):
+        print(f"[{index}] {option['label']}")
+        print(f"    {option['description']}")
+    valid = {str(index) for index in range(1, len(options) + 1)}
+    while True:
+        choice = input(f"Escolha [1-{len(options)}]: ").strip()
+        if choice in valid:
+            return options[int(choice) - 1]["id"]
+        print("❌ Escolha inválida.")
+
+
+def _has_key(*names):
+    return any(os.getenv(name, "").strip() for name in names)
+
+
+def select_stt_provider():
+    return _prompt_choice(
+        "Reconhecimento de voz (STT) — como o agente entende o que você fala:",
+        [
+            {
+                "id": "local",
+                "label": "Whisper local (biblioteca faster-whisper)",
+                "description": "Roda no PC, sem custo de API. Mais lento e menos preciso; boa opção offline.",
+            },
+            {
+                "id": "groq",
+                "label": "Groq Whisper (API)",
+                "description": "Rápido e preciso. Precisa de GROQ_API_KEY. Recomendado no dia a dia.",
+            },
+            {
+                "id": "fish",
+                "label": "Fish Audio ASR (API)",
+                "description": "Transcrição na mesma conta Fish do TTS. Precisa de FISH_API_KEY.",
+            },
+        ],
+    )
+
+
+def select_tts_provider(*, gemini_live=False):
+    if gemini_live:
+        gemini = {
+            "id": "gemini",
+            "label": "Fala nativa do Gemini Live",
+            "description": "Voz do próprio Live (Kore): conversa contínua, baixa latência. O Gemini também ouve direto.",
+        }
+    else:
+        gemini = {
+            "id": "gemini",
+            "label": "Fala do Gemini (API de voz)",
+            "description": "Voz natural do Google (Kore), usada só para falar a resposta. Precisa de GEMINI_API_KEY.",
+        }
+    return _prompt_choice(
+        "Fala (TTS) — como o agente responde em voz:",
+        [
+            gemini,
+            {
+                "id": "edge",
+                "label": "Edge TTS (biblioteca local)",
+                "description": "Voz pt-BR gratuita no Windows (Antonio). Estável, sem cobrança extra.",
+            },
+            {
+                "id": "fish",
+                "label": "Fish Audio TTS (API)",
+                "description": "Clones e emoções (Lula, Bolsonaro, etc.). Precisa de FISH_API_KEY.",
+            },
+        ],
+    )
+
+
 def select_fish_voice():
     from audio.text_to_speech import available_fish_voices
-
-    if os.getenv("TTS_PROVIDER", "edge").strip().lower() != "fish":
-        return None
 
     voices = available_fish_voices()
     print("\nVozes Fish Audio:")
@@ -78,23 +146,38 @@ def select_fish_voice():
         print("❌ Escolha inválida.")
 
 
-def run_text_provider(provider_name, agent, fish_voice_id=None):
+def _require_audio_keys(stt_provider, tts_provider):
+    if stt_provider == "groq" and not _has_key("GROQ_API_KEY"):
+        raise ValueError("GROQ_API_KEY é necessária para o STT da Groq.")
+    if stt_provider == "fish" and not _has_key("FISH_API_KEY", "FISH_API"):
+        raise ValueError("FISH_API_KEY é necessária para o STT da Fish Audio.")
+    if tts_provider == "gemini" and not _has_key("GEMINI_API_KEY"):
+        raise ValueError("GEMINI_API_KEY é necessária para a fala do Gemini.")
+    if tts_provider == "fish" and not _has_key("FISH_API_KEY", "FISH_API"):
+        raise ValueError("FISH_API_KEY é necessária para a fala da Fish Audio.")
+
+
+def run_text_provider(provider_name, agent, stt_provider, tts_provider, fish_voice_id=None):
     from audio.microphone import Microphone
     from audio.speech_to_text import SpeechToText
-    from audio.text_to_speech import TextToSpeech
+    from audio.text_to_speech import TextToSpeech, fish_voice_personality
 
     microphone = Microphone()
-    stt = SpeechToText()
+    stt = SpeechToText(stt_provider)
     tts = TextToSpeech(
         voice="pt-BR-AntonioNeural",
         rate="+15%",
         fish_voice_id=fish_voice_id,
+        provider=tts_provider,
     )
+    if tts_provider == "fish":
+        agent.set_personality(fish_voice_personality(fish_voice_id))
     print(f"\n✅ {provider_name} pronto. Fale normalmente.\n")
+    recent_context = []
     try:
         while True:
             audio_file = microphone.record(output_file="audio.wav")
-            text = stt.transcribe(audio_file).strip()
+            text = stt.transcribe(audio_file, context=" | ".join(recent_context[-3:])).strip()
             if not text:
                 continue
             print(f"\nVocê: {text}")
@@ -103,8 +186,11 @@ def run_text_provider(provider_name, agent, fish_voice_id=None):
                 break
             print("Agente: ", end="", flush=True)
             try:
-                interrupted, _ = tts.speak_stream(agent.ask_stream(text))
+                interrupted, spoken = tts.speak_stream(agent.ask_stream(text))
                 print()
+                recent_context.append(f"Usuário: {text}")
+                if spoken:
+                    recent_context.append(f"Agente: {spoken[:240]}")
                 if interrupted:
                     print("🛑 Interrompido.")
             except Exception as error:
@@ -153,25 +239,46 @@ def run():
         choice, groq_model, openrouter_model, nvidia_model = selection
     agent = None
     try:
-        fish_voice_id = select_fish_voice()
+        from audio.text_to_speech import TextToSpeech
+
         if choice == "1":
-            agent = GeminiLive(screen=screen, webcam=webcam)
+            tts_provider = select_tts_provider(gemini_live=True)
+            _require_audio_keys(None, tts_provider)
+            external_tts = None
+            if tts_provider != "gemini":
+                fish_voice_id = select_fish_voice() if tts_provider == "fish" else None
+                external_tts = TextToSpeech(
+                    voice="pt-BR-AntonioNeural",
+                    rate="+15%",
+                    fish_voice_id=fish_voice_id,
+                    provider=tts_provider,
+                )
+                print("\nEscuta: Gemini nativo  |  Fala: biblioteca/API escolhida")
+            else:
+                print("\nEscuta e fala: nativas do Gemini Live")
+            agent = GeminiLive(screen=screen, webcam=webcam, tts=external_tts)
             asyncio.run(agent.run())
         else:
+            stt_provider = select_stt_provider()
+            tts_provider = select_tts_provider(gemini_live=False)
+            _require_audio_keys(stt_provider, tts_provider)
+            fish_voice_id = select_fish_voice() if tts_provider == "fish" else None
             executor = LocalToolExecutor(screen, webcam)
             router = ProviderRouter(executor.execute)
             if choice == "2":
                 agent = router.groq(groq_model)
-                run_text_provider(f"Groq ({groq_model})", agent, fish_voice_id)
+                label = f"Groq ({groq_model})"
             elif choice == "3":
                 agent = router.openrouter(openrouter_model)
-                run_text_provider(f"OpenRouter ({openrouter_model})", agent, fish_voice_id)
+                label = f"OpenRouter ({openrouter_model})"
             elif choice == "4":
                 agent = router.nvidia(nvidia_model)
-                run_text_provider(f"NVIDIA ({nvidia_model})", agent, fish_voice_id)
+                label = f"NVIDIA ({nvidia_model})"
             else:
                 agent = router.automatic(groq_model, openrouter_model, nvidia_model)
-                run_text_provider("Modo automático", agent, fish_voice_id)
+                label = "Modo automático"
+            print(f"\nSTT: {stt_provider}  |  TTS: {tts_provider}")
+            run_text_provider(label, agent, stt_provider, tts_provider, fish_voice_id)
     except KeyboardInterrupt:
         print("\nEncerrando agente...")
     except Exception as error:
@@ -179,7 +286,10 @@ def run():
     finally:
         if choice == "1" and agent is not None:
             agent.close()
-        webcam.close()
+        try:
+            webcam.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

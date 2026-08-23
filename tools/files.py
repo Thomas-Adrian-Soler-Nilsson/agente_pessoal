@@ -1,5 +1,17 @@
 import os
+import re
+import unicodedata
 from pathlib import Path
+
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None
+
+try:
+    from docx import Document
+except ImportError:
+    Document = None
 
 
 class FileTools:
@@ -23,6 +35,9 @@ class FileTools:
         ".log",
         ".ini",
         ".env",
+        ".pdf",
+        ".docx",
+        ".odt",
     }
 
     def __init__(self):
@@ -35,6 +50,17 @@ class FileTools:
             home / "Downloads",
             home / "OneDrive",
         ]
+        self.skip_dir_names = {
+            ".git",
+            "node_modules",
+            "__pycache__",
+            ".venv",
+            ".venv-1",
+            "dist",
+            "build",
+            ".mypy_cache",
+            ".pytest_cache",
+        }
 
     # ==========================================================
     # VALIDAR CAMINHO
@@ -51,14 +77,26 @@ class FileTools:
         aliases = {
             "downloads": home / "Downloads",
             "download": home / "Downloads",
+            "meus downloads": home / "Downloads",
+            "pasta downloads": home / "Downloads",
             "onedrive\\downloads": home / "OneDrive" / "Downloads",
             "unidrive\\downloads": home / "OneDrive" / "Downloads",
+            "anidrive\\downloads": home / "OneDrive" / "Downloads",
+            "anidriving\\downloads": home / "OneDrive" / "Downloads",
             "onedrive": home / "OneDrive",
             "unidrive": home / "OneDrive",
+            "anidrive": home / "OneDrive",
+            "anidriving": home / "OneDrive",
         }
-        alias = normalized.strip("\\").lower()
-        if alias in aliases:
-            value = str(aliases[alias])
+        alias = self._normalize_text(normalized.strip("\\"))
+        for alias_name, alias_root in sorted(aliases.items(), key=lambda item: -len(item[0])):
+            if alias == alias_name:
+                value = str(alias_root)
+                break
+            prefix = alias_name + "\\"
+            if alias.startswith(prefix):
+                value = str(alias_root / normalized[len(prefix):])
+                break
 
         candidate = (
             Path(value)
@@ -84,6 +122,27 @@ class FileTools:
             "pastas permitidas pelo agente."
         )
 
+    @staticmethod
+    def _normalize_text(value: str) -> str:
+        value = unicodedata.normalize("NFKD", value)
+        value = "".join(char for char in value if not unicodedata.combining(char))
+        return re.sub(r"\s+", " ", value).strip().lower()
+
+    def _is_ignored_path(self, item: Path) -> bool:
+        return any(part.lower() in self.skip_dir_names for part in item.parts)
+
+    @staticmethod
+    def _name_matches(term: str, name: str, stem: str) -> bool:
+        if len(term) < 3:
+            padded = f"_{stem}_"
+            return (
+                stem == term
+                or name.startswith(f"{term}.")
+                or padded.find(f"_{term}_") >= 0
+                or padded.find(f"-{term}-") >= 0
+            )
+        return term in name or term in stem
+
     # ==========================================================
     # LISTAR
     # ==========================================================
@@ -92,6 +151,15 @@ class FileTools:
         self,
         path: str = "~",
     ) -> str:
+
+        if self._normalize_text(path) in {"~", "home", "pastas permitidas"}:
+            roots = [root for root in self.allowed_roots if root.exists()]
+            if not roots:
+                return "Nenhuma pasta permitida está disponível."
+            return (
+                "Pastas permitidas:\n"
+                + "\n".join(f"[PASTA] {root}" for root in roots)
+            )
 
         try:
 
@@ -144,11 +212,14 @@ class FileTools:
                 return "A pasta está vazia."
 
             # Evita contexto gigante.
+            total_entries = len(entries)
             entries = entries[:100]
+            suffix = "" if total_entries <= 100 else f"\n[Mostrando 100 de {total_entries} itens]"
 
             return (
-                f"Conteúdo de {directory}:\n"
+                f"Conteúdo de {directory} ({total_entries} itens):\n"
                 + "\n".join(entries)
+                + suffix
             )
 
         except Exception as error:
@@ -167,27 +238,7 @@ class FileTools:
         path: str = "~",
     ) -> str:
 
-        try:
-
-            root = self._resolve_path(
-                path
-            )
-
-        except Exception as error:
-
-            return str(error)
-
-        if not root.exists():
-
-            return (
-                f"O caminho '{path}' não existe."
-            )
-
-        query = (
-            query
-            .strip()
-            .lower()
-        )
+        query = self._normalize_text(query)
 
         if not query:
 
@@ -195,32 +246,52 @@ class FileTools:
                 "Informe o que devo procurar."
             )
 
+        if self._normalize_text(path) in {"~", "home", "pastas permitidas", ""}:
+            roots = [root for root in self.allowed_roots if root.exists()]
+            if not roots:
+                return "Nenhuma pasta permitida está disponível."
+        else:
+            try:
+                root = self._resolve_path(path)
+            except Exception as error:
+                return str(error)
+            if not root.exists():
+                return f"O caminho '{path}' não existe."
+            roots = [root]
+
+        terms = [term for term in query.split(" ") if term]
         results = []
+        seen = set()
 
         try:
 
-            for item in root.rglob("*"):
+            for root in roots:
+                for item in root.rglob("*"):
 
-                if not item.is_file():
-                    continue
+                    if not item.is_file() or item.is_symlink() or self._is_ignored_path(item):
+                        continue
 
-                if (
-                    query
-                    in item.name.lower()
-                ):
+                    resolved = str(item.resolve())
+                    if resolved in seen:
+                        continue
 
-                    results.append(
-                        str(item)
+                    name = self._normalize_text(item.name)
+                    stem = self._normalize_text(item.stem)
+                    matched_terms = sum(
+                        self._name_matches(term, name, stem) for term in terms
                     )
-
-                if len(results) >= 50:
-                    break
+                    if matched_terms == len(terms):
+                        seen.add(resolved)
+                        results.append((matched_terms, name, item))
 
         except Exception as error:
 
             return (
                 f"Erro durante a busca: {error}"
             )
+
+        results.sort(key=lambda result: (-result[0], result[1]))
+        results = results[:50]
 
         if not results:
 
@@ -232,7 +303,7 @@ class FileTools:
         return (
             f"Arquivos encontrados para "
             f"'{query}':\n"
-            + "\n".join(results)
+            + "\n".join(str(item) for _, _, item in results)
         )
 
     # ==========================================================
@@ -279,18 +350,22 @@ class FileTools:
             )
 
         try:
+            if extension == ".pdf":
+                if PdfReader is None:
+                    return "Para ler PDF, instale a dependência pypdf."
+                reader = PdfReader(str(file_path))
+                content = "\n\n".join(page.extract_text() or "" for page in reader.pages)
+            elif extension == ".docx":
+                if Document is None:
+                    return "Para ler DOCX, instale a dependência python-docx."
+                document = Document(str(file_path))
+                content = "\n\n".join(paragraph.text for paragraph in document.paragraphs)
+            elif extension == ".odt":
+                return "Leitura de ODT ainda não está disponível. Converta o arquivo para PDF ou DOCX."
+            else:
+                content = file_path.read_text(encoding="utf-8", errors="replace")
 
-            content = (
-                file_path
-                .read_text(
-                    encoding="utf-8",
-                    errors="replace",
-                )
-            )
-
-            # Não despejar arquivos gigantes
-            # no contexto do Gemini.
-            max_chars = 30000
+            max_chars = int(os.getenv("READ_FILE_MAX_CHARS", "6000"))
 
             if len(content) > max_chars:
 
@@ -298,6 +373,9 @@ class FileTools:
                     content[:max_chars]
                     + "\n\n[ARQUIVO TRUNCADO]"
                 )
+
+            if not content.strip():
+                return f"O arquivo {file_path.name} não contém texto extraível."
 
             return (
                 f"Conteúdo de {file_path}:\n\n"
