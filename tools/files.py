@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 
@@ -44,8 +45,23 @@ class FileTools:
         path: str,
     ) -> Path:
 
+        value = os.fspath(path).strip().strip('"')
+        normalized = value.replace("/", "\\")
+        home = Path.home()
+        aliases = {
+            "downloads": home / "Downloads",
+            "download": home / "Downloads",
+            "onedrive\\downloads": home / "OneDrive" / "Downloads",
+            "unidrive\\downloads": home / "OneDrive" / "Downloads",
+            "onedrive": home / "OneDrive",
+            "unidrive": home / "OneDrive",
+        }
+        alias = normalized.strip("\\").lower()
+        if alias in aliases:
+            value = str(aliases[alias])
+
         candidate = (
-            Path(path)
+            Path(value)
             .expanduser()
             .resolve()
         )

@@ -146,6 +146,35 @@ class ComputerTools:
             f"'{application}'."
         )
 
+    def open_directory(self, path: str = "~") -> str:
+        if os.name != "nt":
+            return "Abrir pastas pelo Explorador só está disponível no Windows."
+
+        value = os.path.expandvars(os.path.expanduser(path.strip().strip('"')))
+        aliases = {
+            "downloads": os.path.join(os.path.expanduser("~"), "Downloads"),
+            "download": os.path.join(os.path.expanduser("~"), "Downloads"),
+            "onedrive\\downloads": os.path.join(os.path.expanduser("~"), "OneDrive", "Downloads"),
+            "unidrive\\downloads": os.path.join(os.path.expanduser("~"), "OneDrive", "Downloads"),
+            "onedrive": os.path.join(os.path.expanduser("~"), "OneDrive"),
+            "unidrive": os.path.join(os.path.expanduser("~"), "OneDrive"),
+        }
+        alias = value.replace("/", "\\").strip("\\").lower()
+        directory = aliases.get(alias, value)
+        if not os.path.isdir(directory):
+            return f"A pasta '{path}' não existe ou não está disponível."
+
+        try:
+            subprocess.Popen(
+                ["explorer.exe", directory],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            )
+            return f"Abri a pasta '{directory}' no Explorador de Arquivos."
+        except Exception as error:
+            return f"Não consegui abrir a pasta '{path}': {error}"
+
     def open_url(
         self,
         url: str,

@@ -8,12 +8,17 @@ Seja natural, informal, inteligente e levemente irônico, sem ser ofensivo.
 Use as ferramentas quando forem necessárias e nunca invente conteúdo de arquivos.
 Não exclua arquivos, formate nada nem execute comandos destrutivos.
 Como suas respostas serão faladas, seja conciso e evite listas gigantes.
+
+Use open_directory para abrir uma pasta no Explorador de Arquivos.
+Para Downloads, passe "Downloads" ou "OneDrive\\Downloads".
+Use open_application apenas para abrir aplicativos.
 """
 
 
 def build_tools():
     definitions = [
         ("open_application", "Abre um aplicativo instalado no computador.", {"application": {"type": "string"}}, ["application"]),
+        ("open_directory", "Abre uma pasta no Explorador de Arquivos.", {"path": {"type": "string"}}, ["path"]),
         ("open_url", "Abre uma URL no navegador.", {"url": {"type": "string"}}, ["url"]),
         ("list_directory", "Lista arquivos e pastas de um diretório.", {"path": {"type": "string"}}, ["path"]),
         ("search_files", "Procura arquivos pelo nome em uma pasta.", {"query": {"type": "string"}, "path": {"type": "string"}}, ["query"]),

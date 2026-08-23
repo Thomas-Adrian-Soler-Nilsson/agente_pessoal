@@ -35,6 +35,9 @@ GEMINI_API_KEY=sua_chave_gemini
 GROQ_API_KEY=sua_chave_groq
 OPENROUTER_API_KEY=sua_chave_openrouter
 NVIDIA_API_KEY=sua_chave_nvidia
+FISH_API_KEY=sua_chave_fish
+FISH_VOICE_ID=id_da_sua_voz_fish
+FISH_VOICES=Voz principal=id_1,Voz alternativa=id_2
 ```
 
 Nunca envie `.env` para o Git. Ele ja esta protegido pelo `.gitignore`.
@@ -55,6 +58,17 @@ TTS_INTERRUPT_THRESHOLD=0.08
 ```
 
 Valores maiores reduzem interrupcoes causadas pelo ruido ou pelo proprio alto-falante.
+
+O TTS usa Edge TTS por padrao. Para usar Fish Audio, instale as dependencias e configure:
+
+```env
+TTS_PROVIDER=fish
+FISH_API_KEY=sua_chave_fish
+FISH_VOICE_ID=id_da_sua_voz_fish
+FISH_MODEL=s2.1-pro-free
+```
+
+Ao iniciar uma sessao com Fish Audio, o agente exibe as vozes configuradas e permite escolher uma. Use `FISH_VOICES` no formato `Nome=reference_id`, separado por virgulas. Para voltar ao Edge TTS, use `TTS_PROVIDER=edge` ou remova essa variavel. O texto enviado ao Fish Audio preserva tags de emocao, como `[excited]`.
 
 ## Ferramentas locais
 

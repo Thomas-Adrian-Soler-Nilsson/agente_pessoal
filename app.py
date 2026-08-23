@@ -23,6 +23,8 @@ class LocalToolExecutor:
     def execute(self, name, arguments):
         if name == "open_application":
             return self.computer.open_application(arguments.get("application", ""))
+        if name == "open_directory":
+            return self.computer.open_directory(arguments.get("path", "~"))
         if name == "open_url":
             return self.computer.open_url(arguments.get("url", ""))
         if name == "list_directory":
@@ -54,14 +56,40 @@ def select_model(provider_name, models, configured_model):
         print("❌ Escolha inválida.")
 
 
-def run_text_provider(provider_name, agent):
+def select_fish_voice():
+    from audio.text_to_speech import available_fish_voices
+
+    if os.getenv("TTS_PROVIDER", "edge").strip().lower() != "fish":
+        return None
+
+    voices = available_fish_voices()
+    print("\nVozes Fish Audio:")
+    for index, (name, voice_id) in enumerate(voices, 1):
+        print(f"[{index}] {name} ({voice_id})")
+
+    while True:
+        choice = input(
+            f"Escolha a voz [1-{len(voices)}] (Enter mantém a primeira): "
+        ).strip()
+        if not choice:
+            return voices[0][1]
+        if choice.isdigit() and 1 <= int(choice) <= len(voices):
+            return voices[int(choice) - 1][1]
+        print("❌ Escolha inválida.")
+
+
+def run_text_provider(provider_name, agent, fish_voice_id=None):
     from audio.microphone import Microphone
     from audio.speech_to_text import SpeechToText
     from audio.text_to_speech import TextToSpeech
 
     microphone = Microphone()
     stt = SpeechToText()
-    tts = TextToSpeech(voice="pt-BR-AntonioNeural", rate="+15%")
+    tts = TextToSpeech(
+        voice="pt-BR-AntonioNeural",
+        rate="+15%",
+        fish_voice_id=fish_voice_id,
+    )
     print(f"\n✅ {provider_name} pronto. Fale normalmente.\n")
     try:
         while True:
@@ -125,6 +153,7 @@ def run():
         choice, groq_model, openrouter_model, nvidia_model = selection
     agent = None
     try:
+        fish_voice_id = select_fish_voice()
         if choice == "1":
             agent = GeminiLive(screen=screen, webcam=webcam)
             asyncio.run(agent.run())
@@ -133,16 +162,16 @@ def run():
             router = ProviderRouter(executor.execute)
             if choice == "2":
                 agent = router.groq(groq_model)
-                run_text_provider(f"Groq ({groq_model})", agent)
+                run_text_provider(f"Groq ({groq_model})", agent, fish_voice_id)
             elif choice == "3":
                 agent = router.openrouter(openrouter_model)
-                run_text_provider(f"OpenRouter ({openrouter_model})", agent)
+                run_text_provider(f"OpenRouter ({openrouter_model})", agent, fish_voice_id)
             elif choice == "4":
                 agent = router.nvidia(nvidia_model)
-                run_text_provider(f"NVIDIA ({nvidia_model})", agent)
+                run_text_provider(f"NVIDIA ({nvidia_model})", agent, fish_voice_id)
             else:
                 agent = router.automatic(groq_model, openrouter_model, nvidia_model)
-                run_text_provider("Modo automático", agent)
+                run_text_provider("Modo automático", agent, fish_voice_id)
     except KeyboardInterrupt:
         print("\nEncerrando agente...")
     except Exception as error:
