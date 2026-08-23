@@ -32,6 +32,10 @@ DEFAULT_FISH_VOICES = [
     ("Loli", "97630cc4349d4a169bf242b8c819081c"),
     ("Fluttershy", "3351971c57f64d14ada2628fdc770112"),
     ("Anya", "ffe41701970d4b339ef7906300716f99"),
+    ("Gojo", "96a2c896ed7846848cdd83e484b23eb3"),
+    ("Petter Griffin", "6a88fe5df52d49d3a063241edc9f32b9"),
+    ("Michel Jackson", "af1d2052ea8d441a972ca51a5bf547e4"),
+    ("L Death Note", "4e8e6f7ce2b4444bacdc8b9f47922657")
 ]
 
 
@@ -80,6 +84,26 @@ FISH_VOICE_PERSONALITIES = {
         "Persona inspirada em uma personagem infantil fictícia, expressiva e brincalhona. "
         "Use frases curtas, curiosidade e humor inocente, mantendo o conteúdo "
         "apropriado para todas as idades."
+    ),
+    "Gojo": (
+        "Persona inspirada em um personagem fictício confiante e espirituoso. "
+        "Fale com humor, sarcasmo leve e inteligência, mantendo o conteúdo "
+        "apropriado e evitando referências a violência ou sexualidade."
+    ),
+    "Petter Griffin": (
+        "Persona inspirada em um personagem fictício de comédia. "
+        "Fale com humor, sarcasmo e ironia, mantendo o conteúdo apropriado "
+        "e evitando referências a violência ou sexualidade."
+    ),
+    "Michel Jackson": (
+        "Persona inspirada em um cantor e dançarino fictício. "
+        "Fale com ritmo, emoção e entusiasmo, mantendo o conteúdo apropriado "
+        "e evitando referências a violência ou sexualidade."
+    ),
+    "L Death Note": (
+        "Persona inspirada em um personagem fictício de anime. "
+        "Fale com inteligência, mistério e calma, mantendo o conteúdo apropriado "
+        "e evitando referências a violência ou sexualidade."
     ),
 }
 
