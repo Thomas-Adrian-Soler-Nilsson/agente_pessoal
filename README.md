@@ -7,7 +7,8 @@ Agente de voz local para Windows, com conversa em portugues do Brasil, acesso co
 - **Gemini Live**: conversa de voz em tempo real, tela, webcam e acompanhamento continuo.
 - **Groq**: conversa por STT/TTS local e selecao de modelo.
 - **OpenRouter**: conversa por STT/TTS local e selecao de modelo.
-- **Automatico**: tenta Groq primeiro e usa OpenRouter como fallback, preservando o contexto.
+- **NVIDIA**: conversa por STT/TTS local usando a API NVIDIA NIM e selecao de modelo.
+- **Automatico**: tenta Groq, OpenRouter e NVIDIA nessa ordem, preservando o contexto.
 
 ## Requisitos
 
@@ -33,6 +34,7 @@ Edite `.env` apenas localmente e preencha as chaves:
 GEMINI_API_KEY=sua_chave_gemini
 GROQ_API_KEY=sua_chave_groq
 OPENROUTER_API_KEY=sua_chave_openrouter
+NVIDIA_API_KEY=sua_chave_nvidia
 ```
 
 Nunca envie `.env` para o Git. Ele ja esta protegido pelo `.gitignore`.
@@ -44,7 +46,7 @@ Nunca envie `.env` para o Git. Ele ja esta protegido pelo `.gitignore`.
 python app.py
 ```
 
-Escolha o provedor no menu. Groq e OpenRouter exibem os modelos configurados em `GROQ_MODELS` e `OPENROUTER_MODELS`, separados por virgulas. O modelo padrao pode ser alterado com `GROQ_MODEL` e `OPENROUTER_MODEL`.
+Escolha o provedor no menu. Groq, OpenRouter e NVIDIA exibem os modelos configurados em `GROQ_MODELS`, `OPENROUTER_MODELS` e `NVIDIA_MODELS`, separados por virgulas. Os modelos padrao podem ser alterados com `GROQ_MODEL`, `OPENROUTER_MODEL` e `NVIDIA_MODEL`.
 
 O TTS tenta interromper a fala quando detecta sua voz. Ajuste a sensibilidade se necessario:
 

@@ -89,30 +89,40 @@ def run_text_provider(provider_name, agent):
 
 def menu():
     from providers.groq_provider import available_models as groq_models
+    from providers.nvidia_provider import available_models as nvidia_models
     from providers.openrouter_provider import available_models as openrouter_models
 
     print("\n======================================\n           AGENTE PESSOAL\n======================================\n")
     print("[1] Gemini Live\n")
     print("[2] Groq\n    ├── seleção de modelo")
     print("[3] OpenRouter\n    ├── seleção de modelo")
-    print("[4] Automático\n")
-    choice = input("Escolha [1-4]: ").strip()
-    while choice not in {"1", "2", "3", "4"}:
+    print("[4] NVIDIA\n    ├── seleção de modelo")
+    print("[5] Automático\n")
+    choice = input("Escolha [1-5]: ").strip()
+    while choice not in {"1", "2", "3", "4", "5"}:
         print("❌ Escolha inválida.")
-        choice = input("Escolha [1-4]: ").strip()
+        choice = input("Escolha [1-5]: ").strip()
     if choice == "2":
         model = select_model("Groq", groq_models(), os.getenv("GROQ_MODEL"))
-        return choice, model, None
+        return choice, model, None, None
     if choice == "3":
         model = select_model("OpenRouter", openrouter_models(), os.getenv("OPENROUTER_MODEL"))
-        return choice, None, model
-    return choice, None, None
+        return choice, None, model, None
+    if choice == "4":
+        model = select_model("NVIDIA", nvidia_models(), os.getenv("NVIDIA_MODEL"))
+        return choice, None, None, model
+    return choice, None, None, None
 
 
 def run():
     screen = Screen()
     webcam = Webcam()
-    choice, groq_model, openrouter_model = menu()
+    selection = menu()
+    if len(selection) == 3:
+        choice, groq_model, openrouter_model = selection
+        nvidia_model = None
+    else:
+        choice, groq_model, openrouter_model, nvidia_model = selection
     agent = None
     try:
         if choice == "1":
@@ -127,8 +137,11 @@ def run():
             elif choice == "3":
                 agent = router.openrouter(openrouter_model)
                 run_text_provider(f"OpenRouter ({openrouter_model})", agent)
+            elif choice == "4":
+                agent = router.nvidia(nvidia_model)
+                run_text_provider(f"NVIDIA ({nvidia_model})", agent)
             else:
-                agent = router.automatic(groq_model, openrouter_model)
+                agent = router.automatic(groq_model, openrouter_model, nvidia_model)
                 run_text_provider("Modo automático", agent)
     except KeyboardInterrupt:
         print("\nEncerrando agente...")
