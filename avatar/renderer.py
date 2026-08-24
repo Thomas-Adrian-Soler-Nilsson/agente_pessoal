@@ -5,6 +5,7 @@ import ctypes
 
 import pygame
 import live2d.v3 as live2d
+from OpenGL import GL
 
 
 class AvatarRenderer:
@@ -27,7 +28,7 @@ class AvatarRenderer:
 
     # Cor usada como fundo transparente.
     # Magenta forte para não conflitar com a Miku.
-    TRANSPARENT_COLOR = (255, 0, 255)
+    TRANSPARENT_COLOR = (0, 0, 0)
 
     def __init__(self, model_path: str):
 
@@ -43,12 +44,17 @@ class AvatarRenderer:
 
         self.window = None
         self.model = None
+        self.hwnd = None
 
         self.thread = None
 
         self.status = "idle"
         self.expression = "neutral"
         self.intensity = 1.0
+
+        # Estado do arrasto da janela (clique e segure para mover).
+        self._dragging = False
+        self._drag_offset = (0, 0)
 
         self._lock = threading.Lock()
 
@@ -123,6 +129,8 @@ class AvatarRenderer:
 
             live2d.init()
             live2d.glInit()
+            GL.glEnable(GL.GL_BLEND)
+            GL.glBlendFunc(GL.GL_ONE, GL.GL_ONE_MINUS_SRC_ALPHA)
 
             print(
                 "[AvatarRenderer] Carregando:",
@@ -202,12 +210,31 @@ class AvatarRenderer:
                             self.running = False
                             break
 
+                    if event.type == pygame.MOUSEMOTION:
+                        if self._dragging:
+                            self._drag_window()
+                        else:
+                            self._handle_mouse_motion(event.pos)
+
+                    if event.type == pygame.MOUSEBUTTONDOWN:
+                        if event.button == 1:
+                            self._start_window_drag()
+
+                    if event.type == pygame.MOUSEBUTTONUP:
+                        if event.button == 1:
+                            self._dragging = False
+
                 if not self.running:
                     break
 
                 # ------------------------------------------------
                 # UPDATE
                 # ------------------------------------------------
+
+                # Nota: em algumas versões da lib live2d-py, Update()
+                # não aceita deltaTimeSeconds e calcula o tempo
+                # internamente. Se a sua versão exigir o parâmetro,
+                # troque para: self.model.Update(clock.get_time() / 1000.0)
 
                 try:
 
@@ -235,7 +262,7 @@ class AvatarRenderer:
                         r / 255.0,
                         g / 255.0,
                         b / 255.0,
-                        1.0,
+                        0.0,
                     )
 
                 except Exception:
@@ -280,6 +307,80 @@ class AvatarRenderer:
 
             self._shutdown()
 
+    def _handle_mouse_motion(self, position):
+        if self.model is None:
+            return
+
+        mouse_x, mouse_y = position
+
+        # Normaliza X para o intervalo [-1.0, 1.0]
+        norm_x = (mouse_x / self.WIDTH) * 2.0 - 1.0
+
+        # Normaliza Y para o intervalo [-1.0, 1.0] (invertendo o eixo Y do Pygame)
+        norm_y = 1.0 - (mouse_y / self.HEIGHT) * 2.0
+
+        try:
+            # Drag() já atualiza para onde o modelo deve "olhar"/arrastar.
+            # Não existe SetTarget() nesta versão da lib live2d-py.
+            self.model.Drag(norm_x, norm_y)
+        except Exception as error:
+            print(f"[AvatarRenderer] Erro ao mover o modelo com o mouse: {error}")
+
+    # ==========================================================
+    # ARRASTAR A JANELA (a janela não tem borda/título)
+    # ==========================================================
+
+    def _start_window_drag(self):
+        """Chamado ao pressionar o botão esquerdo do mouse."""
+
+        if self.hwnd is None:
+            return
+
+        try:
+            import win32gui
+
+            cursor_x, cursor_y = win32gui.GetCursorPos()
+            window_left, window_top, _, _ = win32gui.GetWindowRect(self.hwnd)
+
+            self._drag_offset = (
+                cursor_x - window_left,
+                cursor_y - window_top,
+            )
+
+            self._dragging = True
+
+        except Exception as error:
+            print(f"[AvatarRenderer] Erro ao iniciar arrasto: {error}")
+
+    def _drag_window(self):
+        """Chamado a cada movimento do mouse enquanto o botão está preso."""
+
+        if self.hwnd is None:
+            return
+
+        try:
+            import win32gui
+            import win32con
+
+            cursor_x, cursor_y = win32gui.GetCursorPos()
+            offset_x, offset_y = self._drag_offset
+
+            new_x = cursor_x - offset_x
+            new_y = cursor_y - offset_y
+
+            win32gui.SetWindowPos(
+                self.hwnd,
+                None,
+                new_x,
+                new_y,
+                0,
+                0,
+                win32con.SWP_NOSIZE | win32con.SWP_NOZORDER,
+            )
+
+        except Exception as error:
+            print(f"[AvatarRenderer] Erro ao arrastar janela: {error}")
+
     # ==========================================================
     # WINDOWS TRANSPARENT WINDOW
     # ==========================================================
@@ -308,6 +409,7 @@ class AvatarRenderer:
             return
 
         hwnd = pygame.display.get_wm_info()["window"]
+        self.hwnd = hwnd
 
         # ------------------------------------------------------
         # Remove borda / título
