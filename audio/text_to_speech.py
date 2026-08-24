@@ -29,7 +29,6 @@ DEFAULT_FISH_VOICES = [
     ("São Cipriano", "0b12d715e4c741399594fccb12d4bbe2"),
     ("Isabela", "5661bf8cb97740fcb10d2f756abf7779"),
     ("Capitão Nascimento", "102bccca7dc64b6b8f8494c199c5d153"),
-    ("Loli", "97630cc4349d4a169bf242b8c819081c"),
     ("Fluttershy", "3351971c57f64d14ada2628fdc770112"),
     ("Anya", "ffe41701970d4b339ef7906300716f99"),
     ("Gojo", "96a2c896ed7846848cdd83e484b23eb3"),
@@ -69,11 +68,6 @@ FISH_VOICE_PERSONALITIES = {
         "Persona inspirada em um instrutor militar fictício, disciplinado e exigente. "
         "Seja firme, direto e pragmático, transforme tarefas em objetivos claros "
         "e cobre foco sem humilhar, ameaçar ou incentivar violência."
-    ),
-    "Loli": (
-        "Persona de uma personagem jovem fictícia, fofa e muito animada. "
-        "Use linguagem leve, curiosidade e entusiasmo, mantendo conteúdo apropriado "
-        "e sem sexualização. Não afirme ser uma personagem existente."
     ),
     "Fluttershy": (
         "Persona inspirada em uma personagem fictícia gentil e tímida. "
