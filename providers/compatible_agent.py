@@ -118,6 +118,33 @@ def build_tools():
             ["url"],
         ),
         (
+            "browser_navigate",
+            "Abre uma página em uma sessão persistente do navegador automatizado.",
+            {"url": {"type": "string"}},
+            ["url"],
+        ),
+        (
+            "browser_read",
+            "Lê o texto visível da página atualmente aberta no navegador automatizado.",
+            {"max_chars": {"type": "integer"}},
+            [],
+        ),
+        (
+            "browser_click",
+            "Clica em um elemento da página usando um seletor CSS ou texto compatível.",
+            {"selector": {"type": "string"}},
+            ["selector"],
+        ),
+        (
+            "browser_fill",
+            "Preenche um campo da página usando um seletor CSS.",
+            {
+                "selector": {"type": "string"},
+                "value": {"type": "string"},
+            },
+            ["selector", "value"],
+        ),
+        (
             "list_directory",
             "Lista arquivos e pastas de um diretório.",
             {

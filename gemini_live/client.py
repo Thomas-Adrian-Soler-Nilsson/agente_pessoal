@@ -11,6 +11,7 @@ from google.genai import types
 
 
 from tools.computer import ComputerTools
+from tools.browser import BrowserTools
 from tools.files import FileTools
 
 
@@ -244,6 +245,50 @@ FUNCTION_DECLARATIONS = [
     },
 
     {
+        "name": "browser_navigate",
+        "description": (
+            "Abre uma página em uma sessão persistente do navegador automatizado."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"url": {"type": "string"}},
+            "required": ["url"],
+        },
+    },
+
+    {
+        "name": "browser_read",
+        "description": "Lê o texto visível da página atual.",
+        "parameters": {
+            "type": "object",
+            "properties": {"max_chars": {"type": "integer"}},
+        },
+    },
+
+    {
+        "name": "browser_click",
+        "description": "Clica em um elemento da página usando um seletor.",
+        "parameters": {
+            "type": "object",
+            "properties": {"selector": {"type": "string"}},
+            "required": ["selector"],
+        },
+    },
+
+    {
+        "name": "browser_fill",
+        "description": "Preenche um campo da página usando um seletor.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "selector": {"type": "string"},
+                "value": {"type": "string"},
+            },
+            "required": ["selector", "value"],
+        },
+    },
+
+    {
         "name": "open_directory",
         "description": (
             "Abre uma pasta no Explorador de Arquivos."
@@ -428,6 +473,10 @@ class GeminiLive:
             ComputerTools()
         )
 
+        self.browser = (
+            BrowserTools()
+        )
+
         self.files = (
             FileTools()
         )
@@ -515,6 +564,27 @@ class GeminiLive:
                                 "~",
                             )
                         )
+                    )
+
+                elif name == "browser_navigate":
+                    result = self.browser.navigate(
+                        arguments.get("url", "")
+                    )
+
+                elif name == "browser_read":
+                    result = self.browser.read(
+                        arguments.get("max_chars")
+                    )
+
+                elif name == "browser_click":
+                    result = self.browser.click(
+                        arguments.get("selector", "")
+                    )
+
+                elif name == "browser_fill":
+                    result = self.browser.fill(
+                        arguments.get("selector", ""),
+                        arguments.get("value", ""),
                     )
 
                 # ----------------------------------------------

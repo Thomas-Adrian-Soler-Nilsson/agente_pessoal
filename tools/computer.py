@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import unicodedata
 import webbrowser
+from urllib.parse import urlsplit
 
 
 class ComputerTools:
@@ -124,18 +125,7 @@ class ComputerTools:
         if os.name == "nt":
 
             try:
-
-                subprocess.Popen(
-                    [
-                        "powershell",
-                        "-NoProfile",
-                        "-Command",
-                        "Start-Process",
-                        application,
-                    ],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+                os.startfile(application)
 
                 return (
                     f"Solicitei ao Windows a abertura "
@@ -203,16 +193,37 @@ class ComputerTools:
     ) -> str:
 
         url = url.strip()
+        if not url:
+            return "Informe qual URL devo abrir."
 
-        if not (
-            url.startswith("http://")
-            or url.startswith("https://")
-        ):
+        try:
+            parsed_input = urlsplit(url)
+        except ValueError:
+            return "Informe uma URL válida."
+
+        scheme = parsed_input.scheme.lower()
+        if scheme and scheme not in {"http", "https"}:
+            port_candidate = url.partition(":")[2].split("/", 1)[0]
+            if port_candidate.isdigit():
+                scheme = ""
+            else:
+                return "A URL deve usar http:// ou https://."
+
+        if not scheme:
             url = "https://" + url
 
         try:
+            parsed_url = urlsplit(url)
+        except ValueError:
+            return "Informe uma URL válida."
+        if not parsed_url.hostname or any(char.isspace() for char in url):
+            return "Informe uma URL válida."
 
-            webbrowser.open(url)
+        try:
+            opened = webbrowser.open(url)
+
+            if not opened:
+                return f"Não consegui abrir {url} no navegador."
 
             return (
                 f"Abri {url} no navegador."

@@ -8,6 +8,7 @@ from gemini_live.client import GeminiLive
 from providers.router import ProviderRouter
 from screen.screen import Screen
 from tools.computer import ComputerTools
+from tools.browser import BrowserTools
 from tools.files import FileTools
 from tools.image_generation import ImageGenerator
 from webcam.webcam import Webcam
@@ -27,6 +28,7 @@ class LocalToolExecutor:
         self.webcam = webcam
 
         self.computer = ComputerTools()
+        self.browser = BrowserTools()
         self.files = FileTools()
         self.images = ImageGenerator()
 
@@ -46,6 +48,21 @@ class LocalToolExecutor:
         if name == "open_url":
             return self.computer.open_url(
                 arguments.get("url", "")
+            )
+
+        if name == "browser_navigate":
+            return self.browser.navigate(arguments.get("url", ""))
+
+        if name == "browser_read":
+            return self.browser.read(arguments.get("max_chars"))
+
+        if name == "browser_click":
+            return self.browser.click(arguments.get("selector", ""))
+
+        if name == "browser_fill":
+            return self.browser.fill(
+                arguments.get("selector", ""),
+                arguments.get("value", ""),
             )
 
         if name == "list_directory":
