@@ -13,7 +13,8 @@ from tools.files import FileTools
 from tools.image_generation import ImageGenerator
 from webcam.webcam import Webcam
 from avatar.avatar import Avatar
-
+from tools.web_search import search_and_read
+from tools import web_search as search_web
 
 load_dotenv()
 
@@ -39,6 +40,14 @@ class LocalToolExecutor:
             return self.computer.open_application(
                 arguments.get("application", "")
             )
+        if name == "web_search":
+            return search_and_read(arguments.get("query", ""))
+
+        if name == "deep_search":
+            return search_web.deep_search(arguments.get("query", ""))
+
+        if name == "code_search":
+            return search_web.code_search(arguments.get("query", ""))
 
         if name == "open_directory":
             return self.computer.open_directory(

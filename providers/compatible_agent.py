@@ -72,6 +72,26 @@ Sem pasta específica, use path "~" para procurar nas pastas permitidas.
 Se encontrar o arquivo, use read_file com o caminho retornado.
 Use list_directory para mostrar o conteúdo de uma pasta.
 
+Use web_search como primeira opção sempre que Thomas pedir para
+pesquisar, procurar ou ler conteúdo da internet. É rápida, não depende
+de navegador instalado e não trava a sessão de voz.
+Use browser_search ou browser_navigate apenas quando web_search falhar,
+ou quando o site exigir interação real (clicar, preencher formulário,
+JavaScript pesado que só carrega com navegador de verdade).
+
+Use deep_search apenas quando Thomas pedir explicitamente uma pesquisa
+profunda, completa, detalhada, aprofundada, ou quiser comparar
+informações de várias fontes diferentes sobre um mesmo assunto. Para
+perguntas simples e rápidas, prefira sempre web_search.
+
+Você pode chamar ferramentas de pesquisa (web_search, deep_search,
+code_search) mais de uma vez na mesma resposta se a primeira busca não
+trouxer informação suficiente, ou se quiser refinar a pesquisa com
+termos diferentes. Cada busca já retorna conteúdo resumido e limitado,
+então múltiplas chamadas não estouram o limite de tokens. Prefira 2-3
+chamadas no máximo, cada uma com uma query um pouco diferente, para
+cobrir ângulos diferentes do assunto antes de responder.
+
 Use generate_image quando Thomas pedir para criar, gerar ou desenhar uma
 imagem. Escreva um prompt descritivo e detalhado (de preferência em
 inglês) a partir do pedido dele.
@@ -116,6 +136,62 @@ def build_tools():
                 }
             },
             ["url"],
+        ),
+        (
+            "web_search",
+            (
+                "Pesquisa um termo na internet via requisição HTTP direta "
+                "(rápido, sem abrir navegador) e retorna o conteúdo do "
+                "primeiro resultado com a URL de origem. Use esta como "
+                "primeira opção para pesquisas e leitura de conteúdo da "
+                "web — é muito mais rápida que browser_search."
+            ),
+            {
+                "query": {
+                    "type": "string",
+                    "description": "Termos da pesquisa.",
+                }
+            },
+            ["query"],
+        ),
+        (
+            "deep_search",
+            (
+                "Faz uma pesquisa profunda na web, lendo várias fontes "
+                "(mais que web_search) para dar uma resposta completa e "
+                "bem embasada. Use quando Thomas pedir explicitamente uma "
+                "pesquisa aprofundada, detalhada, completa ou quiser "
+                "comparar informações de múltiplas fontes. Gasta mais "
+                "tokens e é mais lenta que web_search — não use para "
+                "perguntas simples ou rápidas."
+            ),
+            {
+                "query": {
+                    "type": "string",
+                    "description": "Termos da pesquisa profunda.",
+                }
+            },
+            ["query"],
+        ),
+        (
+            "code_search",
+            (
+                "Pesquisa técnica focada em programação: bibliotecas, "
+                "pacotes Python, documentação oficial, Stack Overflow e "
+                "GitHub. Para nomes de pacotes Python conhecidos, já "
+                "retorna dados estruturados direto do PyPI (mais rápido "
+                "e confiável). Use sempre que Thomas perguntar sobre "
+                "código, bibliotecas, erros de programação ou APIs."
+            ),
+            {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Nome do pacote/lib, ou pergunta técnica de código."
+                    ),
+                }
+            },
+            ["query"],
         ),
         (
             "browser_navigate",
@@ -370,11 +446,11 @@ class CompatibleAgent:
                     + "\n\n[TRUNCADO PARA CABER NO LIMITE DO MODELO]"
                 )
 
-    def _is_too_large(self, error) -> bool:
-        status = getattr(
-            error,
-            "status_code",
-            None,
+    def _is_tool_choice_conflict(self, error) -> bool:
+        text = str(error).lower()
+        return (
+            "tool choice is none" in text
+            and "called a tool" in text
         )
 
         text = str(error).lower()
@@ -790,9 +866,9 @@ class CompatibleAgent:
             }
         )
 
-        for round_index in range(5):
+        for round_index in range(9):
 
-            allow_tools = round_index < 4
+            allow_tools = round_index < 8
 
             kwargs = {
                 "model": self.model,
@@ -820,10 +896,20 @@ class CompatibleAgent:
             if allow_tools:
                 kwargs["tools"] = self.tools
                 kwargs["tool_choice"] = "auto"
+            try:
+                response = self._completion(
+                    **kwargs
+                )
+            except Exception as error:
+                if self._is_tool_choice_conflict(error):
+                    yield (
+                        "Desculpa, Thomas, me perdi tentando usar uma "
+                        "ferramenta nessa resposta. Pode repetir o "
+                        "pedido de um jeito mais direto?"
+                    )
+                    return
 
-            response = self._completion(
-                **kwargs
-            )
+                raise
 
             message = response.choices[0].message
 
