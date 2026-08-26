@@ -374,7 +374,8 @@ cd agente_pessoal
 ### 2. Criar o ambiente virtual
 
 ```powershell
-python -m venv .venv
+winget install Python.Python.3.12
+py -3.12 -m venv -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 

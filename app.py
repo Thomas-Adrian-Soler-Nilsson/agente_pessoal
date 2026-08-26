@@ -1,7 +1,10 @@
 import asyncio
 import os
+import threading
 
 from dotenv import load_dotenv
+from prompt_toolkit import prompt as terminal_prompt
+from prompt_toolkit.patch_stdout import patch_stdout
 
 from ui import ui
 from gemini_live.client import GeminiLive
@@ -12,9 +15,23 @@ from tools.browser import BrowserTools
 from tools.files import FileTools
 from tools.image_generation import ImageGenerator
 from webcam.webcam import Webcam
-from avatar.avatar import Avatar
 from tools.web_search import search_and_read
 from tools import web_search as search_web
+
+
+# ============================================================
+# AVATAR — OPCIONAL
+# ============================================================
+
+try:
+    from avatar.avatar import Avatar
+except Exception as error:
+    Avatar = None
+
+    print(
+        f"[Avatar] Indisponível: {error}"
+    )
+
 
 load_dotenv()
 
@@ -24,7 +41,12 @@ load_dotenv()
 # ============================================================
 
 class LocalToolExecutor:
-    def __init__(self, screen, webcam):
+
+    def __init__(
+        self,
+        screen,
+        webcam,
+    ):
         self.screen = screen
         self.webcam = webcam
 
@@ -33,88 +55,206 @@ class LocalToolExecutor:
         self.files = FileTools()
         self.images = ImageGenerator()
 
-    def execute(self, name, arguments):
+    def execute(
+        self,
+        name,
+        arguments,
+    ):
         arguments = arguments or {}
+
+        # ----------------------------------------------------
+        # COMPUTADOR
+        # ----------------------------------------------------
 
         if name == "open_application":
             return self.computer.open_application(
-                arguments.get("application", "")
+                arguments.get(
+                    "application",
+                    "",
+                )
             )
-        if name == "web_search":
-            return search_and_read(arguments.get("query", ""))
-
-        if name == "deep_search":
-            return search_web.deep_search(arguments.get("query", ""))
-
-        if name == "code_search":
-            return search_web.code_search(arguments.get("query", ""))
 
         if name == "open_directory":
             return self.computer.open_directory(
-                arguments.get("path", "~")
+                arguments.get(
+                    "path",
+                    "~",
+                )
             )
 
         if name == "open_url":
             return self.computer.open_url(
-                arguments.get("url", "")
+                arguments.get(
+                    "url",
+                    "",
+                )
             )
 
+        # ----------------------------------------------------
+        # WEB
+        # ----------------------------------------------------
+
+        if name == "web_search":
+            return search_and_read(
+                arguments.get(
+                    "query",
+                    "",
+                )
+            )
+
+        if name == "deep_search":
+            return search_web.deep_search(
+                arguments.get(
+                    "query",
+                    "",
+                )
+            )
+
+        if name == "code_search":
+            return search_web.code_search(
+                arguments.get(
+                    "query",
+                    "",
+                )
+            )
+
+        # ----------------------------------------------------
+        # BROWSER
+        # ----------------------------------------------------
+
         if name == "browser_navigate":
-            return self.browser.navigate(arguments.get("url", ""))
+            return self.browser.navigate(
+                arguments.get(
+                    "url",
+                    "",
+                )
+            )
 
         if name == "browser_read":
-            return self.browser.read(arguments.get("max_chars"))
+            return self.browser.read(
+                arguments.get(
+                    "max_chars"
+                )
+            )
 
         if name == "browser_click":
-            return self.browser.click(arguments.get("selector", ""))
+            return self.browser.click(
+                arguments.get(
+                    "selector",
+                    "",
+                )
+            )
 
         if name == "browser_fill":
             return self.browser.fill(
-                arguments.get("selector", ""),
-                arguments.get("value", ""),
+                arguments.get(
+                    "selector",
+                    "",
+                ),
+                arguments.get(
+                    "value",
+                    "",
+                ),
             )
+
+        # ----------------------------------------------------
+        # ARQUIVOS
+        # ----------------------------------------------------
 
         if name == "list_directory":
             return self.files.list_directory(
-                arguments.get("path", "~")
+                arguments.get(
+                    "path",
+                    "~",
+                )
             )
 
         if name == "search_files":
             return self.files.search_files(
-                arguments.get("query", ""),
-                arguments.get("path", "~"),
+                arguments.get(
+                    "query",
+                    "",
+                ),
+                arguments.get(
+                    "path",
+                    "~",
+                ),
             )
 
         if name == "read_file":
             return self.files.read_file(
-                arguments.get("path", "")
+                arguments.get(
+                    "path",
+                    "",
+                )
+            )
+
+        if name == "write_file":
+            return self.files.write_file(
+                arguments.get(
+                    "path",
+                    "",
+                ),
+                arguments.get(
+                    "content",
+                    "",
+                ),
+            )
+
+        if name == "execute_file":
+            return self.files.execute_file(
+                arguments.get(
+                    "path",
+                    "",
+                )
             )
 
         if name == "get_file_info":
             return self.files.get_file_info(
-                arguments.get("path", "")
+                arguments.get(
+                    "path",
+                    "",
+                )
             )
+
+        # ----------------------------------------------------
+        # VISÃO
+        # ----------------------------------------------------
 
         if name == "capture_screen":
             return {
                 "type": "image",
                 "data": self.screen.capture(),
-                "description": "Captura atual da tela.",
+                "description": (
+                    "Captura atual da tela."
+                ),
             }
 
         if name == "capture_webcam":
             return {
                 "type": "image",
                 "data": self.webcam.capture(),
-                "description": "Captura atual da webcam.",
+                "description": (
+                    "Captura atual da webcam."
+                ),
             }
+
+        # ----------------------------------------------------
+        # IMAGEM
+        # ----------------------------------------------------
 
         if name == "generate_image":
             return self.images.generate(
-                arguments.get("prompt", "")
+                arguments.get(
+                    "prompt",
+                    "",
+                )
             )
 
-        return f"Ferramenta desconhecida: {name}"
+        return (
+            f"Ferramenta desconhecida: "
+            f"{name}"
+        )
 
 
 # ============================================================
@@ -122,13 +262,21 @@ class LocalToolExecutor:
 # ============================================================
 
 def _has_key(*names):
+
     return any(
-        os.getenv(name, "").strip()
+        os.getenv(
+            name,
+            "",
+        ).strip()
         for name in names
     )
 
 
-def _prompt_choice(title, options):
+def _prompt_choice(
+    title,
+    options,
+):
+
     rows = [
         {
             "label": option["label"],
@@ -137,40 +285,71 @@ def _prompt_choice(title, options):
         for option in options
     ]
 
-    ui.menu_table(title, rows)
+    ui.menu_table(
+        title,
+        rows,
+    )
 
     valid = {
         str(index)
-        for index in range(1, len(options) + 1)
+        for index in range(
+            1,
+            len(options) + 1,
+        )
     }
 
     while True:
+
         choice = ui.prompt(
             f"Escolha [1-{len(options)}]:"
         ).strip()
 
         if choice in valid:
-            return options[int(choice) - 1]["id"]
 
-        ui.error("Escolha inválida.")
+            return options[
+                int(choice) - 1
+            ]["id"]
+
+        ui.error(
+            "Escolha inválida."
+        )
+
+
+# ============================================================
+# PROMPT DO CHAT
+# ============================================================
+
+def _chat_prompt():
+    with patch_stdout(raw=False):
+        return terminal_prompt(
+            "Você › "
+        )
 
 
 # ============================================================
 # SELEÇÃO DE MODELOS
 # ============================================================
 
-def select_model(provider_name, models, configured_model):
+def select_model(
+    provider_name,
+    models,
+    configured_model,
+):
+
     if not models:
         raise ValueError(
-            f"Nenhum modelo disponível para {provider_name}."
+            f"Nenhum modelo disponível "
+            f"para {provider_name}."
         )
 
     rows = [
         {
             "label": model,
-            "tag": "(configurado)"
-            if model == configured_model
-            else None,
+            "tag": (
+                "(configurado)"
+                if model == configured_model
+                else None
+            ),
         }
         for model in models
     ]
@@ -181,21 +360,32 @@ def select_model(provider_name, models, configured_model):
     )
 
     while True:
+
         choice = ui.prompt(
-            f"Escolha o modelo [1-{len(models)}] "
+            f"Escolha o modelo "
+            f"[1-{len(models)}] "
             "(Enter mantém configuração):"
         ).strip()
 
         if not choice:
-            return configured_model or models[0]
+
+            return (
+                configured_model
+                or models[0]
+            )
 
         if (
             choice.isdigit()
             and 1 <= int(choice) <= len(models)
         ):
-            return models[int(choice) - 1]
 
-        ui.error("Escolha inválida.")
+            return models[
+                int(choice) - 1
+            ]
+
+        ui.error(
+            "Escolha inválida."
+        )
 
 
 # ============================================================
@@ -203,12 +393,19 @@ def select_model(provider_name, models, configured_model):
 # ============================================================
 
 def select_stt_provider():
+
     return _prompt_choice(
-        "Reconhecimento de voz (STT) — como o agente entende o que você fala:",
+        (
+            "Reconhecimento de voz (STT) — "
+            "como o agente entende o que você fala:"
+        ),
         [
             {
                 "id": "local",
-                "label": "Whisper local (faster-whisper)",
+                "label": (
+                    "Whisper local "
+                    "(faster-whisper)"
+                ),
                 "description": (
                     "Roda no PC sem custo de API. "
                     "Boa opção offline."
@@ -216,7 +413,9 @@ def select_stt_provider():
             },
             {
                 "id": "groq",
-                "label": "Groq Whisper (API)",
+                "label": (
+                    "Groq Whisper (API)"
+                ),
                 "description": (
                     "Muito rápido e preciso. "
                     "Precisa de GROQ_API_KEY."
@@ -224,9 +423,12 @@ def select_stt_provider():
             },
             {
                 "id": "fish",
-                "label": "Fish Audio ASR (API)",
+                "label": (
+                    "Fish Audio ASR (API)"
+                ),
                 "description": (
-                    "Transcrição usando a conta Fish Audio. "
+                    "Transcrição usando "
+                    "a conta Fish Audio. "
                     "Precisa de FISH_API_KEY."
                 ),
             },
@@ -238,17 +440,27 @@ def select_stt_provider():
 # TTS
 # ============================================================
 
-def select_tts_provider(*, gemini_live=False):
+def select_tts_provider(
+    *,
+    gemini_live=False,
+):
+
     if gemini_live:
+
         gemini_option = {
             "id": "gemini",
-            "label": "Fala nativa do Gemini Live",
+            "label": (
+                "Fala nativa do Gemini Live"
+            ),
             "description": (
-                "Voz nativa do Gemini Live com "
-                "conversa contínua e baixa latência."
+                "Voz nativa do Gemini Live "
+                "com conversa contínua "
+                "e baixa latência."
             ),
         }
+
     else:
+
         gemini_option = {
             "id": "gemini",
             "label": "Gemini TTS",
@@ -259,7 +471,10 @@ def select_tts_provider(*, gemini_live=False):
         }
 
     return _prompt_choice(
-        "Fala (TTS) — como o agente responde em voz:",
+        (
+            "Fala (TTS) — "
+            "como o agente responde em voz:"
+        ),
         [
             gemini_option,
             {
@@ -274,7 +489,8 @@ def select_tts_provider(*, gemini_live=False):
                 "id": "fish",
                 "label": "Fish Audio TTS",
                 "description": (
-                    "Vozes com clonagem e emoções. "
+                    "Vozes com clonagem "
+                    "e emoções. "
                     "Precisa de FISH_API_KEY."
                 ),
             },
@@ -283,7 +499,10 @@ def select_tts_provider(*, gemini_live=False):
 
 
 def select_fish_voice():
-    from audio.text_to_speech import available_fish_voices
+
+    from audio.text_to_speech import (
+        available_fish_voices,
+    )
 
     voices = available_fish_voices()
 
@@ -306,8 +525,10 @@ def select_fish_voice():
     )
 
     while True:
+
         choice = ui.prompt(
-            f"Escolha a voz [1-{len(voices)}] "
+            f"Escolha a voz "
+            f"[1-{len(voices)}] "
             "(Enter mantém a primeira):"
         ).strip()
 
@@ -318,9 +539,14 @@ def select_fish_voice():
             choice.isdigit()
             and 1 <= int(choice) <= len(voices)
         ):
-            return voices[int(choice) - 1][1]
 
-        ui.error("Escolha inválida.")
+            return voices[
+                int(choice) - 1
+            ][1]
+
+        ui.error(
+            "Escolha inválida."
+        )
 
 
 # ============================================================
@@ -331,12 +557,16 @@ def _require_audio_keys(
     stt_provider,
     tts_provider,
 ):
+
     if (
         stt_provider == "groq"
-        and not _has_key("GROQ_API_KEY")
+        and not _has_key(
+            "GROQ_API_KEY"
+        )
     ):
         raise ValueError(
-            "GROQ_API_KEY é necessária para o STT da Groq."
+            "GROQ_API_KEY é necessária "
+            "para o STT da Groq."
         )
 
     if (
@@ -347,15 +577,19 @@ def _require_audio_keys(
         )
     ):
         raise ValueError(
-            "FISH_API_KEY é necessária para o STT da Fish Audio."
+            "FISH_API_KEY é necessária "
+            "para o STT da Fish Audio."
         )
 
     if (
         tts_provider == "gemini"
-        and not _has_key("GEMINI_API_KEY")
+        and not _has_key(
+            "GEMINI_API_KEY"
+        )
     ):
         raise ValueError(
-            "GEMINI_API_KEY é necessária para o TTS do Gemini."
+            "GEMINI_API_KEY é necessária "
+            "para o TTS do Gemini."
         )
 
     if (
@@ -366,7 +600,8 @@ def _require_audio_keys(
         )
     ):
         raise ValueError(
-            "FISH_API_KEY é necessária para o TTS da Fish Audio."
+            "FISH_API_KEY é necessária "
+            "para o TTS da Fish Audio."
         )
 
 
@@ -375,6 +610,7 @@ def _require_audio_keys(
 # ============================================================
 
 def menu():
+
     from providers.groq_provider import (
         available_models as groq_models,
     )
@@ -401,19 +637,22 @@ def menu():
         {
             "label": "Gemini Live",
             "description": (
-                "voz nativa, tela e webcam em tempo real"
+                "voz nativa, tela e webcam "
+                "em tempo real"
             ),
         },
         {
             "label": "Groq",
             "description": (
-                "modelos rápidos com seleção de modelo"
+                "modelos rápidos com "
+                "seleção de modelo"
             ),
         },
         {
             "label": "Mistral",
             "description": (
-                "modelos Mistral com seleção de modelo"
+                "modelos Mistral com "
+                "seleção de modelo"
             ),
         },
         {
@@ -437,7 +676,8 @@ def menu():
         {
             "label": "Automático",
             "description": (
-                "Groq → Mistral → OpenRouter → NVIDIA"
+                "Groq → Mistral → "
+                "OpenRouter → NVIDIA"
             ),
         },
     ]
@@ -460,14 +700,21 @@ def menu():
         "6",
         "7",
     }:
-        ui.error("Escolha inválida.")
+
+        ui.error(
+            "Escolha inválida."
+        )
 
         choice = ui.prompt(
             "Escolha [1-7]:"
         ).strip()
 
-    # Gemini Live
+    # --------------------------------------------------------
+    # GEMINI
+    # --------------------------------------------------------
+
     if choice == "1":
+
         return {
             "choice": choice,
             "groq_model": None,
@@ -477,12 +724,18 @@ def menu():
             "ollama_model": None,
         }
 
-    # Groq
+    # --------------------------------------------------------
+    # GROQ
+    # --------------------------------------------------------
+
     if choice == "2":
+
         model = select_model(
             "Groq",
             groq_models(),
-            os.getenv("GROQ_MODEL"),
+            os.getenv(
+                "GROQ_MODEL"
+            ),
         )
 
         return {
@@ -494,12 +747,18 @@ def menu():
             "ollama_model": None,
         }
 
-    # Mistral
+    # --------------------------------------------------------
+    # MISTRAL
+    # --------------------------------------------------------
+
     if choice == "3":
+
         model = select_model(
             "Mistral",
             mistral_models(),
-            os.getenv("MISTRAL_MODEL"),
+            os.getenv(
+                "MISTRAL_MODEL"
+            ),
         )
 
         return {
@@ -511,12 +770,18 @@ def menu():
             "ollama_model": None,
         }
 
-    # OpenRouter
+    # --------------------------------------------------------
+    # OPENROUTER
+    # --------------------------------------------------------
+
     if choice == "4":
+
         model = select_model(
             "OpenRouter",
             openrouter_models(),
-            os.getenv("OPENROUTER_MODEL"),
+            os.getenv(
+                "OPENROUTER_MODEL"
+            ),
         )
 
         return {
@@ -528,12 +793,18 @@ def menu():
             "ollama_model": None,
         }
 
+    # --------------------------------------------------------
     # NVIDIA
+    # --------------------------------------------------------
+
     if choice == "5":
+
         model = select_model(
             "NVIDIA",
             nvidia_models(),
-            os.getenv("NVIDIA_MODEL"),
+            os.getenv(
+                "NVIDIA_MODEL"
+            ),
         )
 
         return {
@@ -545,12 +816,18 @@ def menu():
             "ollama_model": None,
         }
 
-    # Ollama
+    # --------------------------------------------------------
+    # OLLAMA
+    # --------------------------------------------------------
+
     if choice == "6":
+
         model = select_model(
             "Ollama",
             ollama_models(),
-            os.getenv("OLLAMA_MODEL"),
+            os.getenv(
+                "OLLAMA_MODEL"
+            ),
         )
 
         return {
@@ -562,7 +839,10 @@ def menu():
             "ollama_model": model,
         }
 
-    # Automático
+    # --------------------------------------------------------
+    # AUTOMÁTICO
+    # --------------------------------------------------------
+
     return {
         "choice": choice,
         "groq_model": None,
@@ -585,6 +865,7 @@ def run_text_provider(
     fish_voice_id=None,
     avatar=None,
 ):
+
     from audio.microphone import Microphone
     from audio.speech_to_text import SpeechToText
     from audio.text_to_speech import (
@@ -592,11 +873,16 @@ def run_text_provider(
         fish_voice_personality,
     )
 
-    microphone = Microphone()
+    # ========================================================
+    # STT SOB DEMANDA
+    # ========================================================
 
-    stt = SpeechToText(
-        stt_provider
-    )
+    microphone = None
+    stt = None
+
+    # ========================================================
+    # TTS
+    # ========================================================
 
     tts = TextToSpeech(
         voice="pt-BR-AntonioNeural",
@@ -609,6 +895,7 @@ def run_text_provider(
         tts_provider == "fish"
         and fish_voice_id
     ):
+
         agent.set_personality(
             fish_voice_personality(
                 fish_voice_id
@@ -621,89 +908,101 @@ def run_text_provider(
     )
 
     ui.ok(
-        "Pronto. Fale normalmente."
+        "Pronto. Digite no CMD. "
+        "Use /voz para falar pelo microfone."
     )
+
+    # ========================================================
+    # CONTEXTO
+    # ========================================================
 
     recent_context = []
 
-    try:
-        while True:
+    # ========================================================
+    # CONTROLE DE THREADS
+    # ========================================================
 
-            # ----------------------------------------------
-            # AVATAR — ESCUTANDO
-            # ----------------------------------------------
+    response_thread = None
 
-            if avatar:
-                avatar.listening()
+    response_lock = threading.Lock()
 
-            audio_file = microphone.record(
-                output_file="audio.wav"
-            )
+    # IMPORTANTE:
+    # O mesmo agente não deve executar ask_stream() simultaneamente,
+    # porque ele mantém self.messages internamente.
+    agent_lock = threading.Lock()
 
-            text = stt.transcribe(
-                audio_file,
-                context=" | ".join(
-                    recent_context[-3:]
-                ),
-            ).strip()
+    # Cada nova mensagem recebe um ID.
+    response_id = 0
 
-            if not text:
+    # ========================================================
+    # PROCESSAMENTO DA MENSAGEM
+    # ========================================================
+
+    def process_message(
+        text,
+        current_response_id,
+    ):
+
+        nonlocal response_thread
+
+        try:
+
+            # ------------------------------------------------
+            # AGUARDA O AGENTE FICAR LIVRE
+            # ------------------------------------------------
+
+            with agent_lock:
+
+                # --------------------------------------------
+                # Verifica se a mensagem ainda é a atual
+                # --------------------------------------------
+
+                with response_lock:
+
+                    if (
+                        current_response_id
+                        != response_id
+                    ):
+                        return
+
                 if avatar:
-                    avatar.idle()
+                    avatar.thinking()
 
-                continue
-
-            ui.user_line(text)
-
-            # ----------------------------------------------
-            # COMANDOS DE SAÍDA
-            # ----------------------------------------------
-
-            if text.lower() in {
-                "sair",
-                "encerrar",
-                "tchau",
-                "desligar",
-            }:
-
-                if avatar:
-                    avatar.happy(0.6)
-
-                tts.speak(
-                    "Até mais."
-                )
-
-                break
-
-            # ----------------------------------------------
-            # AVATAR — PENSANDO
-            # ----------------------------------------------
-
-            if avatar:
-                avatar.thinking()
-
-            ui.agent_prefix()
-
-            try:
-
-                # ------------------------------------------
-                # AVATAR — FALANDO
-                # ------------------------------------------
+                ui.agent_prefix()
 
                 if avatar:
                     avatar.speaking()
 
+                # --------------------------------------------
+                # PROCESSA LLM + TTS
+                # --------------------------------------------
+
                 was_interrupted, spoken = (
                     tts.speak_stream(
-                        agent.ask_stream(text)
+                        agent.ask_stream(
+                            text
+                        )
                     )
                 )
 
+                # --------------------------------------------
+                # GARANTE FIM DE LINHA
+                # --------------------------------------------
+
                 ui.console.print()
 
-                # ------------------------------------------
-                # CONTEXTO RECENTE
-                # ------------------------------------------
+            # ------------------------------------------------
+            # VERIFICA SE A RESPOSTA AINDA É ATUAL
+            # ------------------------------------------------
+
+            with response_lock:
+
+                still_current = (
+                    current_response_id
+                    == response_id
+                )
+
+            if still_current:
 
                 recent_context.append(
                     f"Usuário: {text}"
@@ -711,12 +1010,8 @@ def run_text_provider(
 
                 if spoken:
                     recent_context.append(
-                        f"Agente: {spoken[:240]}"
+                        f"Agente: {spoken[:500]}"
                     )
-
-                # ------------------------------------------
-                # INTERRUPÇÃO
-                # ------------------------------------------
 
                 if was_interrupted:
 
@@ -730,7 +1025,16 @@ def run_text_provider(
                     if avatar:
                         avatar.idle()
 
-            except Exception as error:
+        except Exception as error:
+
+            with response_lock:
+
+                still_current = (
+                    current_response_id
+                    == response_id
+                )
+
+            if still_current:
 
                 if avatar:
                     avatar.neutral()
@@ -738,6 +1042,163 @@ def run_text_provider(
                 ui.error(
                     f"Erro: {error}"
                 )
+
+        finally:
+
+            with response_lock:
+
+                if (
+                    current_response_id
+                    == response_id
+                ):
+
+                    response_thread = None
+
+    # ========================================================
+    # LOOP PRINCIPAL
+    # ========================================================
+
+    try:
+
+        while True:
+
+            if avatar:
+                avatar.idle()
+
+            # ------------------------------------------------
+            # PROMPT
+            # ------------------------------------------------
+
+            text = _chat_prompt().strip()
+
+            if not text:
+                continue
+
+            # ------------------------------------------------
+            # MODO DE VOZ
+            # ------------------------------------------------
+
+            if text.lower() in {
+                "/voz",
+                "voz",
+                "/voice",
+            }:
+
+                # Cancela reprodução atual.
+                with response_lock:
+                    response_id += 1
+
+                tts.stop()
+
+                if avatar:
+                    avatar.listening()
+
+                ui.info(
+                    "🎤 Fale agora..."
+                )
+
+                # --------------------------------------------
+                # STT SOB DEMANDA
+                # --------------------------------------------
+
+                if microphone is None:
+                    microphone = Microphone()
+
+                if stt is None:
+                    stt = SpeechToText(
+                        stt_provider
+                    )
+
+                audio_file = microphone.record(
+                    output_file="audio.wav"
+                )
+
+                recognized_text = (
+                    stt.transcribe(
+                        audio_file,
+                        context=" | ".join(
+                            recent_context[-3:]
+                        ),
+                    )
+                    .strip()
+                )
+
+                if not recognized_text:
+
+                    ui.warn(
+                        "Não consegui entender."
+                    )
+
+                    if avatar:
+                        avatar.idle()
+
+                    continue
+
+                text = recognized_text
+
+                # Mostra a transcrição.
+                ui.console.print(
+                    f"[user]Você[/user] "
+                    f"[muted]›[/muted] "
+                    f"{text}"
+                )
+
+            # ------------------------------------------------
+            # SAIR
+            # ------------------------------------------------
+
+            if text.lower() in {
+                "sair",
+                "encerrar",
+                "tchau",
+                "desligar",
+            }:
+
+                with response_lock:
+                    response_id += 1
+
+                tts.stop()
+
+                if avatar:
+                    avatar.happy(
+                        0.6
+                    )
+
+                tts.speak(
+                    "Até mais."
+                )
+
+                break
+
+            # ------------------------------------------------
+            # NOVA MENSAGEM
+            # ------------------------------------------------
+
+            with response_lock:
+
+                # Invalida resposta anterior.
+                response_id += 1
+
+                current_response_id = (
+                    response_id
+                )
+
+                # Interrompe a fala anterior.
+                if response_thread is not None:
+
+                    tts.stop()
+
+                # Cria nova thread.
+                response_thread = threading.Thread(
+                    target=process_message,
+                    args=(
+                        text,
+                        current_response_id,
+                    ),
+                    daemon=True,
+                )
+
+                response_thread.start()
 
     except KeyboardInterrupt:
 
@@ -749,10 +1210,22 @@ def run_text_provider(
 
     finally:
 
-        if avatar:
-            avatar.idle()
+        with response_lock:
+            response_id += 1
 
         tts.stop()
+
+        if response_thread is not None:
+
+            try:
+                response_thread.join(
+                    timeout=0.5
+                )
+            except Exception:
+                pass
+
+        if avatar:
+            avatar.idle()
 
 
 # ============================================================
@@ -764,7 +1237,10 @@ def run_gemini_live(
     webcam,
     avatar,
 ):
-    from audio.text_to_speech import TextToSpeech
+
+    from audio.text_to_speech import (
+        TextToSpeech
+    )
 
     tts_provider = select_tts_provider(
         gemini_live=True
@@ -800,7 +1276,8 @@ def run_gemini_live(
     else:
 
         ui.status(
-            "Escuta e fala: nativas do Gemini Live"
+            "Escuta e fala: "
+            "nativas do Gemini Live"
         )
 
     if avatar:
@@ -813,18 +1290,24 @@ def run_gemini_live(
     )
 
     try:
+
         asyncio.run(
             agent.run()
         )
+
     finally:
+
         if external_tts:
+
             try:
                 external_tts.stop()
+
             except Exception:
                 pass
 
         try:
             agent.close()
+
         except Exception:
             pass
 
@@ -842,17 +1325,17 @@ def create_text_agent(
     nvidia_model=None,
     ollama_model=None,
 ):
+
     if choice == "2":
 
         agent = router.groq(
             groq_model
         )
 
-        label = (
+        return (
+            agent,
             f"Groq ({groq_model})"
         )
-
-        return agent, label
 
     if choice == "3":
 
@@ -860,11 +1343,10 @@ def create_text_agent(
             mistral_model
         )
 
-        label = (
+        return (
+            agent,
             f"Mistral ({mistral_model})"
         )
-
-        return agent, label
 
     if choice == "4":
 
@@ -872,11 +1354,10 @@ def create_text_agent(
             openrouter_model
         )
 
-        label = (
+        return (
+            agent,
             f"OpenRouter ({openrouter_model})"
         )
-
-        return agent, label
 
     if choice == "5":
 
@@ -884,11 +1365,10 @@ def create_text_agent(
             nvidia_model
         )
 
-        label = (
+        return (
+            agent,
             f"NVIDIA ({nvidia_model})"
         )
-
-        return agent, label
 
     if choice == "6":
 
@@ -896,13 +1376,15 @@ def create_text_agent(
             ollama_model
         )
 
-        label = (
+        return (
+            agent,
             f"Ollama ({ollama_model})"
         )
 
-        return agent, label
+    # --------------------------------------------------------
+    # AUTOMÁTICO
+    # --------------------------------------------------------
 
-    # Automático
     agent = router.automatic(
         groq_model,
         openrouter_model,
@@ -910,9 +1392,10 @@ def create_text_agent(
         mistral_model,
     )
 
-    label = "Modo automático"
-
-    return agent, label
+    return (
+        agent,
+        "Modo automático"
+    )
 
 
 def run_text_mode(
@@ -921,6 +1404,7 @@ def run_text_mode(
     avatar,
     selection,
 ):
+
     stt_provider = select_stt_provider()
 
     tts_provider = select_tts_provider(
@@ -977,7 +1461,70 @@ def run_text_mode(
 # ============================================================
 
 def start_avatar():
+
+    if Avatar is None:
+
+        ui.warn(
+            "Avatar Live2D indisponível. "
+            "Continuando sem avatar."
+        )
+
+        return None
+
     try:
+
+        from pathlib import Path
+
+        avatar_root = (
+            Path(__file__).resolve().parent
+            / "avatar"
+            / "models"
+            / "miku_free"
+            / "runtime"
+        )
+
+        model_file = (
+            avatar_root
+            / "miku.model3.json"
+        )
+
+        texture_file = (
+            avatar_root
+            / "miku.2048"
+            / "texture_00.png"
+        )
+
+        # ----------------------------------------------------
+        # MODELO
+        # ----------------------------------------------------
+
+        if not model_file.exists():
+
+            ui.warn(
+                "Avatar indisponível: "
+                "miku.model3.json não encontrado. "
+                "Continuando sem avatar."
+            )
+
+            return None
+
+        # ----------------------------------------------------
+        # TEXTURA
+        # ----------------------------------------------------
+
+        if not texture_file.exists():
+
+            ui.warn(
+                "Avatar indisponível: "
+                "texture_00.png não encontrado. "
+                "Continuando sem avatar."
+            )
+
+            return None
+
+        # ----------------------------------------------------
+        # INICIALIZAÇÃO
+        # ----------------------------------------------------
 
         avatar = Avatar()
 
@@ -998,13 +1545,19 @@ def start_avatar():
         return None
 
 
-def close_avatar(avatar):
+def close_avatar(
+    avatar,
+):
+
     if not avatar:
         return
 
     try:
+
         avatar.close()
+
     except Exception:
+
         pass
 
 
@@ -1013,6 +1566,7 @@ def close_avatar(avatar):
 # ============================================================
 
 def run():
+
     screen = Screen()
     webcam = Webcam()
 
@@ -1021,21 +1575,21 @@ def run():
 
     try:
 
-        # ----------------------------------------------
+        # ----------------------------------------------------
         # MENU
-        # ----------------------------------------------
+        # ----------------------------------------------------
 
         selection = menu()
 
-        # ----------------------------------------------
+        # ----------------------------------------------------
         # AVATAR
-        # ----------------------------------------------
+        # ----------------------------------------------------
 
         avatar = start_avatar()
 
-        # ----------------------------------------------
+        # ----------------------------------------------------
         # GEMINI LIVE
-        # ----------------------------------------------
+        # ----------------------------------------------------
 
         if selection["choice"] == "1":
 
@@ -1045,9 +1599,9 @@ def run():
                 avatar,
             )
 
-        # ----------------------------------------------
+        # ----------------------------------------------------
         # PROVIDERS DE TEXTO
-        # ----------------------------------------------
+        # ----------------------------------------------------
 
         else:
 
@@ -1065,16 +1619,20 @@ def run():
         )
 
         if avatar:
+
             try:
                 avatar.neutral()
+
             except Exception:
                 pass
 
     except Exception as error:
 
         if avatar:
+
             try:
                 avatar.neutral()
+
             except Exception:
                 pass
 
@@ -1084,21 +1642,24 @@ def run():
 
     finally:
 
-        # ----------------------------------------------
+        # ----------------------------------------------------
         # AVATAR
-        # ----------------------------------------------
+        # ----------------------------------------------------
 
         close_avatar(
             avatar
         )
 
-        # ----------------------------------------------
+        # ----------------------------------------------------
         # WEBCAM
-        # ----------------------------------------------
+        # ----------------------------------------------------
 
         try:
+
             webcam.close()
+
         except Exception:
+
             pass
 
 

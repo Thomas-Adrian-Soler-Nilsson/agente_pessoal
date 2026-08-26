@@ -13,6 +13,18 @@ Use as ferramentas quando forem necessárias e nunca invente conteúdo de arquiv
 Não exclua arquivos, formate nada nem execute comandos destrutivos.
 Como suas respostas serão faladas, seja conciso e evite listas gigantes.
 
+REGRAS DE FERRAMENTAS:
+
+- Use ferramentas somente quando elas forem realmente necessárias.
+- Não repita a mesma chamada de ferramenta com os mesmos argumentos.
+- Se uma ferramenta já retornou informação suficiente para responder, pare de usar ferramentas.
+- Para análise de código, normalmente uma única leitura do arquivo é suficiente.
+- Se read_file já retornou o conteúdo de um caminho nesta solicitação,
+  use esse conteúdo em vez de ler o mesmo arquivo novamente.
+- Não leia novamente um arquivo apenas para confirmar o conteúdo.
+- Não fique em um ciclo de ferramentas tentando obter exatamente a mesma informação.
+- Depois de obter dados suficientes, produza a resposta final.
+
 MEMÓRIA TEMPORAL:
 Você possui uma memória temporal persistente local.
 A memória temporal sobrevive ao encerramento do programa.
@@ -72,29 +84,53 @@ Sem pasta específica, use path "~" para procurar nas pastas permitidas.
 Se encontrar o arquivo, use read_file com o caminho retornado.
 Use list_directory para mostrar o conteúdo de uma pasta.
 
+CRIAÇÃO E EXECUÇÃO DE CÓDIGO:
+
+Quando Thomas pedir para criar código e salvar em arquivo:
+
+1. Gere o código.
+2. Escolha um caminho apropriado.
+3. Use write_file para criar o arquivo.
+4. Não peça para Thomas copiar e colar manualmente.
+5. Confirme o caminho retornado pela ferramenta.
+
+Quando Thomas pedir para executar, testar ou rodar um arquivo:
+
+1. Verifique qual arquivo deve ser executado.
+2. Use execute_file.
+3. Analise STDOUT, STDERR e código de saída.
+4. Se houver erro, explique o erro.
+5. Quando possível, corrija o arquivo usando write_file.
+6. Execute novamente para validar a correção.
+
+Para páginas HTML:
+- crie os arquivos necessários;
+- use execute_file no index.html para abrir no navegador.
+
+Para projetos com múltiplos arquivos:
+- crie cada arquivo necessário individualmente;
+- mantenha todos na mesma pasta do projeto;
+- depois execute o arquivo de entrada apropriado.
+
+Nunca diga para Thomas criar manualmente um arquivo que você consegue criar usando write_file.
+
 Use web_search como primeira opção sempre que Thomas pedir para
 pesquisar, procurar ou ler conteúdo da internet. É rápida, não depende
 de navegador instalado e não trava a sessão de voz.
-Use browser_search ou browser_navigate apenas quando web_search falhar,
-ou quando o site exigir interação real (clicar, preencher formulário,
-JavaScript pesado que só carrega com navegador de verdade).
+Use browser_navigate apenas quando web_search falhar,
+ou quando o site exigir interação real.
 
 Use deep_search apenas quando Thomas pedir explicitamente uma pesquisa
 profunda, completa, detalhada, aprofundada, ou quiser comparar
-informações de várias fontes diferentes sobre um mesmo assunto. Para
-perguntas simples e rápidas, prefira sempre web_search.
+informações de várias fontes diferentes.
+Para perguntas simples e rápidas, prefira sempre web_search.
 
-Você pode chamar ferramentas de pesquisa (web_search, deep_search,
-code_search) mais de uma vez na mesma resposta se a primeira busca não
-trouxer informação suficiente, ou se quiser refinar a pesquisa com
-termos diferentes. Cada busca já retorna conteúdo resumido e limitado,
-então múltiplas chamadas não estouram o limite de tokens. Prefira 2-3
-chamadas no máximo, cada uma com uma query um pouco diferente, para
-cobrir ângulos diferentes do assunto antes de responder.
+Você pode chamar ferramentas de pesquisa mais de uma vez na mesma resposta
+quando a primeira busca não trouxer informação suficiente, mas evite
+repetir exatamente a mesma consulta.
 
 Use generate_image quando Thomas pedir para criar, gerar ou desenhar uma
-imagem. Escreva um prompt descritivo e detalhado (de preferência em
-inglês) a partir do pedido dele.
+imagem. Escreva um prompt descritivo e detalhado.
 
 Considere sempre o resultado da ferramenta como a fonte da verdade.
 Nunca invente nomes, tipos ou conteúdos de arquivos.
@@ -103,6 +139,9 @@ caminho ou nome mais específico.
 
 Depois de uma operação de arquivo, descreva somente o que foi retornado agora.
 """
+
+
+MAX_TOOL_ROUNDS = 4
 
 
 def build_tools():
@@ -141,10 +180,7 @@ def build_tools():
             "web_search",
             (
                 "Pesquisa um termo na internet via requisição HTTP direta "
-                "(rápido, sem abrir navegador) e retorna o conteúdo do "
-                "primeiro resultado com a URL de origem. Use esta como "
-                "primeira opção para pesquisas e leitura de conteúdo da "
-                "web — é muito mais rápida que browser_search."
+                "e retorna o conteúdo do resultado com a URL de origem."
             ),
             {
                 "query": {
@@ -158,12 +194,7 @@ def build_tools():
             "deep_search",
             (
                 "Faz uma pesquisa profunda na web, lendo várias fontes "
-                "(mais que web_search) para dar uma resposta completa e "
-                "bem embasada. Use quando Thomas pedir explicitamente uma "
-                "pesquisa aprofundada, detalhada, completa ou quiser "
-                "comparar informações de múltiplas fontes. Gasta mais "
-                "tokens e é mais lenta que web_search — não use para "
-                "perguntas simples ou rápidas."
+                "para dar uma resposta completa e bem embasada."
             ),
             {
                 "query": {
@@ -176,47 +207,57 @@ def build_tools():
         (
             "code_search",
             (
-                "Pesquisa técnica focada em programação: bibliotecas, "
-                "pacotes Python, documentação oficial, Stack Overflow e "
-                "GitHub. Para nomes de pacotes Python conhecidos, já "
-                "retorna dados estruturados direto do PyPI (mais rápido "
-                "e confiável). Use sempre que Thomas perguntar sobre "
-                "código, bibliotecas, erros de programação ou APIs."
+                "Pesquisa técnica focada em programação, bibliotecas, "
+                "pacotes Python, documentação, Stack Overflow e GitHub."
             ),
             {
                 "query": {
                     "type": "string",
-                    "description": (
-                        "Nome do pacote/lib, ou pergunta técnica de código."
-                    ),
+                    "description": "Nome do pacote/lib ou pergunta técnica.",
                 }
             },
             ["query"],
         ),
         (
             "browser_navigate",
-            "Abre uma página em uma sessão persistente do navegador automatizado.",
-            {"url": {"type": "string"}},
+            "Abre uma página em uma sessão persistente do navegador.",
+            {
+                "url": {
+                    "type": "string"
+                }
+            },
             ["url"],
         ),
         (
             "browser_read",
-            "Lê o texto visível da página atualmente aberta no navegador automatizado.",
-            {"max_chars": {"type": "integer"}},
+            "Lê o texto visível da página atualmente aberta.",
+            {
+                "max_chars": {
+                    "type": "integer"
+                }
+            },
             [],
         ),
         (
             "browser_click",
-            "Clica em um elemento da página usando um seletor CSS ou texto compatível.",
-            {"selector": {"type": "string"}},
+            "Clica em um elemento da página usando um seletor.",
+            {
+                "selector": {
+                    "type": "string"
+                }
+            },
             ["selector"],
         ),
         (
             "browser_fill",
-            "Preenche um campo da página usando um seletor CSS.",
+            "Preenche um campo da página usando um seletor.",
             {
-                "selector": {"type": "string"},
-                "value": {"type": "string"},
+                "selector": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                },
             },
             ["selector", "value"],
         ),
@@ -245,11 +286,60 @@ def build_tools():
         ),
         (
             "read_file",
-            "Lê o conteúdo extraível de arquivos TXT, PDF, DOCX e formatos de texto permitidos.",
+            (
+                "Lê o conteúdo extraível de arquivos TXT, PDF, DOCX "
+                "e formatos de texto permitidos. "
+                "Não repita a leitura do mesmo caminho na mesma solicitação "
+                "quando o conteúdo já tiver sido retornado."
+            ),
             {
                 "path": {
                     "type": "string"
                 }
+            },
+            ["path"],
+        ),
+        (
+            "write_file",
+            (
+                "Cria ou sobrescreve um arquivo dentro das pastas "
+                "permitidas pelo agente. Use quando Thomas pedir para "
+                "criar, salvar, atualizar ou escrever código em um arquivo. "
+                "O conteúdo deve ser fornecido integralmente. "
+                "Não peça para Thomas copiar e colar manualmente."
+            ),
+            {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Caminho completo ou relativo do arquivo."
+                    ),
+                },
+                "content": {
+                    "type": "string",
+                    "description": (
+                        "Conteúdo completo que será gravado no arquivo."
+                    ),
+                },
+            },
+            ["path", "content"],
+        ),
+        (
+            "execute_file",
+            (
+                "Executa um arquivo usando um runtime permitido. "
+                "Use depois de criar ou modificar um programa quando "
+                "Thomas pedir para executar, testar ou rodar o arquivo. "
+                "Python (.py), JavaScript (.js) e HTML (.html/.htm) "
+                "são suportados diretamente."
+            ),
+            {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Caminho do arquivo que será executado."
+                    ),
+                },
             },
             ["path"],
         ),
@@ -278,40 +368,27 @@ def build_tools():
         (
             "generate_image",
             (
-                "Gera uma imagem a partir de uma descrição em texto usando "
-                "a API de geração de imagens da Hugging Face, salva o "
-                "arquivo localmente e abre para visualização."
+                "Gera uma imagem a partir de uma descrição "
+                "usando a Hugging Face Inference API."
             ),
             {
                 "prompt": {
                     "type": "string",
-                    "description": (
-                        "Descrição detalhada da imagem a ser gerada. "
-                        "Prefira descrever em inglês para melhores resultados."
-                    ),
+                    "description": "Descrição detalhada da imagem.",
                 }
             },
             ["prompt"],
         ),
-
-        # ========================================================
-        # MEMÓRIA TEMPORAL
-        # ========================================================
-
         (
             "save_memory",
             (
-                "Salva uma informação importante sobre Thomas na memória "
-                "temporal persistente. Use somente quando a informação "
-                "for realmente útil em conversas futuras ou quando Thomas "
-                "pedir explicitamente para lembrar."
+                "Salva uma informação importante sobre Thomas "
+                "na memória temporal persistente."
             ),
             {
                 "content": {
                     "type": "string",
-                    "description": (
-                        "Informação curta e útil que deve ser lembrada."
-                    ),
+                    "description": "Informação curta e útil.",
                 },
                 "category": {
                     "type": "string",
@@ -324,15 +401,11 @@ def build_tools():
                         "fact",
                         "general",
                     ],
-                    "description": "Categoria da memória.",
                 },
                 "importance": {
                     "type": "number",
                     "minimum": 0,
                     "maximum": 1,
-                    "description": (
-                        "Importância da memória entre 0.0 e 1.0."
-                    ),
                 },
             },
             ["content", "category", "importance"],
@@ -340,24 +413,18 @@ def build_tools():
         (
             "search_memory",
             (
-                "Pesquisa informações previamente armazenadas na memória "
-                "temporal persistente. Use quando a resposta depender de "
-                "algo que Thomas possa ter contado anteriormente."
+                "Pesquisa informações previamente armazenadas "
+                "na memória temporal persistente."
             ),
             {
                 "query": {
                     "type": "string",
-                    "description": (
-                        "Termos importantes para procurar na memória."
-                    ),
+                    "description": "Termos importantes para procurar.",
                 },
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 10,
-                    "description": (
-                        "Quantidade máxima de memórias retornadas."
-                    ),
                 },
             },
             ["query"],
@@ -382,6 +449,7 @@ def build_tools():
 
 
 class CompatibleAgent:
+
     def __init__(
         self,
         client,
@@ -395,10 +463,8 @@ class CompatibleAgent:
 
         self.tools = build_tools()
 
-        # Memória temporal persistente.
         self.temporal_memory = TemporalMemory()
 
-        # Memória momentânea da conversa atual.
         self.messages = (
             messages
             if messages is not None
@@ -446,19 +512,38 @@ class CompatibleAgent:
                     + "\n\n[TRUNCADO PARA CABER NO LIMITE DO MODELO]"
                 )
 
+    def _is_too_large(self, error) -> bool:
+        """
+        Detecta erros de contexto/payload grande.
+        """
+
+        text = str(error).lower()
+
+        indicators = (
+            "context length",
+            "maximum context",
+            "max context",
+            "context window",
+            "too many tokens",
+            "token limit",
+            "request too large",
+            "payload too large",
+            "prompt is too long",
+            "maximum tokens",
+            "413",
+        )
+
+        return any(
+            indicator in text
+            for indicator in indicators
+        )
+
     def _is_tool_choice_conflict(self, error) -> bool:
         text = str(error).lower()
+
         return (
             "tool choice is none" in text
             and "called a tool" in text
-        )
-
-        text = str(error).lower()
-
-        return (
-            status == 413
-            or "request too large" in text
-            or "tokens per minute" in text
         )
 
     # ============================================================
@@ -467,17 +552,9 @@ class CompatibleAgent:
 
     @staticmethod
     def _clean_model_output(content: str) -> str:
-        """
-        Remove tokens especiais que alguns modelos podem retornar.
-
-        Isso é especialmente importante para modelos GPT-OSS,
-        pois esses tokens nunca devem chegar ao TTS.
-        """
-
         if not content:
             return ""
 
-        # Tokens que indicam encerramento da geração.
         end_tokens = (
             "<|endoftext|>",
             "<|end|>",
@@ -486,8 +563,6 @@ class CompatibleAgent:
             "<|eom_id|>",
         )
 
-        # Se algum token de encerramento aparecer,
-        # tudo depois dele é descartado.
         for token in end_tokens:
             if token in content:
                 content = content.split(
@@ -495,7 +570,6 @@ class CompatibleAgent:
                     1,
                 )[0]
 
-        # Remove tokens especiais restantes.
         special_tokens = (
             "<|start|>",
             "<|assistant|>",
@@ -534,7 +608,7 @@ class CompatibleAgent:
                 ):
                     ui.warn(
                         "Pedido grande demais. "
-                        "Enviando um resumo menor do contexto..."
+                        "Reduzindo o contexto e tentando novamente..."
                     )
 
                     self._shrink_context()
@@ -543,13 +617,14 @@ class CompatibleAgent:
 
                     continue
 
+                status_code = getattr(
+                    error,
+                    "status_code",
+                    None,
+                )
+
                 if (
-                    getattr(
-                        error,
-                        "status_code",
-                        None,
-                    )
-                    != 429
+                    status_code != 429
                     or attempt == 1
                 ):
                     raise
@@ -718,10 +793,37 @@ class CompatibleAgent:
     # TOOL CALLS
     # ============================================================
 
+    def _tool_call_key(self, call) -> str:
+        try:
+            arguments = json.loads(
+                call.function.arguments or "{}"
+            )
+
+            normalized_arguments = json.dumps(
+                arguments,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+
+        except Exception:
+            normalized_arguments = (
+                call.function.arguments or "{}"
+            )
+
+        return (
+            f"{call.function.name}:"
+            f"{normalized_arguments}"
+        )
+
     def _execute_tool_calls(
         self,
         tool_calls,
+        executed_tool_calls=None,
     ):
+
+        if executed_tool_calls is None:
+            executed_tool_calls = set()
+
         payload = [
             {
                 "id": call.id,
@@ -744,46 +846,67 @@ class CompatibleAgent:
 
         for call in tool_calls:
 
-            try:
-                arguments = json.loads(
-                    call.function.arguments or "{}"
-                )
-
-                tool_name = call.function.name
-
-                # ====================================================
-                # MEMÓRIA TEMPORAL
-                # ====================================================
-
-                if tool_name == "save_memory":
-                    result = self._save_memory(
-                        arguments
-                    )
-
-                elif tool_name == "search_memory":
-                    result = self._search_memory(
-                        arguments
-                    )
-
-                # ====================================================
-                # OUTRAS FERRAMENTAS
-                # ====================================================
-
-                else:
-                    result = self.tool_executor(
-                        tool_name,
-                        arguments,
-                    )
-
-            except Exception as error:
-                result = (
-                    f"Erro ao executar "
-                    f"{call.function.name}: {error}"
-                )
-
-            ui.console.print(
-                f"\n[info]🔧 IA →[/info] [bold]{call.function.name}()[/bold]"
+            tool_key = self._tool_call_key(
+                call
             )
+
+            if tool_key in executed_tool_calls:
+
+                result = (
+                    "Esta mesma ferramenta com os mesmos argumentos "
+                    "já foi executada nesta solicitação. "
+                    "Use o resultado anterior em vez de repetir a chamada."
+                )
+
+                ui.console.print(
+                    f"\n[warn]🔁 Ferramenta repetida ignorada:[/warn] "
+                    f"{call.function.name}()"
+                )
+
+            else:
+
+                executed_tool_calls.add(
+                    tool_key
+                )
+
+                try:
+
+                    arguments = json.loads(
+                        call.function.arguments or "{}"
+                    )
+
+                    tool_name = call.function.name
+
+                    if tool_name == "save_memory":
+
+                        result = self._save_memory(
+                            arguments
+                        )
+
+                    elif tool_name == "search_memory":
+
+                        result = self._search_memory(
+                            arguments
+                        )
+
+                    else:
+
+                        result = self.tool_executor(
+                            tool_name,
+                            arguments,
+                        )
+
+                except Exception as error:
+
+                    result = (
+                        f"Erro ao executar "
+                        f"{call.function.name}: {error}"
+                    )
+
+                ui.console.print(
+                    f"\n[info]🔧 IA →[/info] "
+                    f"[bold]{call.function.name}()[/bold]"
+                )
 
             # ========================================================
             # IMAGEM
@@ -793,6 +916,7 @@ class CompatibleAgent:
                 isinstance(result, dict)
                 and result.get("type") == "image"
             ):
+
                 self.messages.append(
                     {
                         "role": "tool",
@@ -859,6 +983,7 @@ class CompatibleAgent:
         self,
         user_message: str,
     ):
+
         self.messages.append(
             {
                 "role": "user",
@@ -866,15 +991,22 @@ class CompatibleAgent:
             }
         )
 
-        for round_index in range(9):
+        executed_tool_calls = set()
 
-            allow_tools = round_index < 8
+        for round_index in range(
+            MAX_TOOL_ROUNDS
+        ):
+
+            allow_tools = (
+                round_index
+                < MAX_TOOL_ROUNDS - 1
+            )
 
             kwargs = {
                 "model": self.model,
                 "messages": self.messages,
                 "temperature": 0.4,
-                "max_completion_tokens": 300,
+                "max_completion_tokens": 1200,
             }
 
             # ========================================================
@@ -885,8 +1017,7 @@ class CompatibleAgent:
                 "openai/gpt-oss-20b",
                 "openai/gpt-oss-120b",
             }:
-                # Não queremos que o reasoning seja retornado
-                # junto da resposta que será enviada ao TTS.
+
                 kwargs["include_reasoning"] = False
 
             # ========================================================
@@ -894,24 +1025,35 @@ class CompatibleAgent:
             # ========================================================
 
             if allow_tools:
+
                 kwargs["tools"] = self.tools
                 kwargs["tool_choice"] = "auto"
+
             try:
+
                 response = self._completion(
                     **kwargs
                 )
+
             except Exception as error:
-                if self._is_tool_choice_conflict(error):
+
+                if self._is_tool_choice_conflict(
+                    error
+                ):
                     yield (
-                        "Desculpa, Thomas, me perdi tentando usar uma "
-                        "ferramenta nessa resposta. Pode repetir o "
-                        "pedido de um jeito mais direto?"
+                        "Desculpa, me perdi tentando usar uma "
+                        "ferramenta nessa resposta. "
+                        "Pode repetir o pedido de um jeito mais direto?"
                     )
                     return
 
                 raise
 
-            message = response.choices[0].message
+            message = (
+                response
+                .choices[0]
+                .message
+            )
 
             # ========================================================
             # TOOL CALL
@@ -921,9 +1063,28 @@ class CompatibleAgent:
                 allow_tools
                 and message.tool_calls
             ):
-                self._execute_tool_calls(
-                    message.tool_calls
+
+                previous_count = len(
+                    executed_tool_calls
                 )
+
+                self._execute_tool_calls(
+                    message.tool_calls,
+                    executed_tool_calls,
+                )
+
+                current_count = len(
+                    executed_tool_calls
+                )
+
+                if current_count == previous_count:
+
+                    ui.warn(
+                        "Nenhuma ferramenta nova foi executada. "
+                        "Encerrando o ciclo de ferramentas."
+                    )
+
+                    allow_tools = False
 
                 continue
 
@@ -943,6 +1104,7 @@ class CompatibleAgent:
             )
 
             if content:
+
                 yield content
                 return
 

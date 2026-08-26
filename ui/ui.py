@@ -17,6 +17,11 @@ from rich.text import Text
 from rich.theme import Theme
 from rich.rule import Rule
 
+
+from prompt_toolkit import prompt as terminal_prompt
+from prompt_toolkit.patch_stdout import patch_stdout
+
+
 THEME = Theme(
     {
         "brand": "bold #B98CFF",
@@ -142,13 +147,28 @@ def user_line(text: str) -> None:
 
 
 def agent_prefix() -> None:
-    """Imprime o prefixo 'Agente:' sem quebrar linha, para stream de tokens."""
-    console.print("[agent]Agente[/agent] [muted]›[/muted] ", end="")
+    console.print(
+        "\n[agent]Agente[/agent] [muted]›[/muted] ",
+        end=""
+    )
 
 
 def interrupted() -> None:
     console.print("\n[warn]🛑 Interrompido.[/warn]")
 
 
+
+
+
 def prompt(message: str) -> str:
-    return console.input(f"[brand]{message}[/brand] ")
+    """
+    Entrada de texto compatível com saída concorrente.
+
+    O prompt é mantido sem markup Rich para evitar que códigos ANSI
+    apareçam literalmente no terminal.
+    """
+
+    with patch_stdout(raw=False):
+        return terminal_prompt(
+            message,
+        )

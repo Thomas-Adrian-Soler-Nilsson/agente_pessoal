@@ -1,0 +1,58 @@
+/* Estilo simples e elegante */
+body {
+    margin: 0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(135deg, #f0f4ff, #d9e2ff);
+    color: #333;
+    line-height: 1.6;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+}
+
+.container {
+    background: #fff;
+    max-width: 800px;
+    margin: 40px 20px;
+    padding: 30px;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+header h1 {
+    margin: 0 0 20px;
+    font-size: 2.2rem;
+    color: #2c3e50;
+    text-align: center;
+}
+
+section p {
+    margin: 12px 0;
+    font-size: 1.1rem;
+}
+
+/* Botão simples */
+.cta {
+    display: block;
+    margin: 20px auto 0;
+    padding: 10px 20px;
+    font-size: 1rem;
+    color: #fff;
+    background-color: #3498db;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.cta:hover {
+    background-color: #2980b9;
+}
+
+footer {
+    margin-top: 30px;
+    text-align: center;
+    font-size: 0.9rem;
+    color: #777;
+}

@@ -12,8 +12,9 @@ OLLAMA_BASE_URL = os.getenv(
 
 def available_models():
     return [
-        "llama3:latest",
+        "llama3.1",
         "minimax-m3:cloud",
+        "qwen2.5-coder:latest",
     ]
 
 
