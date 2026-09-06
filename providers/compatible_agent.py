@@ -1,5 +1,6 @@
 import json
 import time
+import concurrent.futures
 from typing import Callable
 from pathlib import Path
 
@@ -33,6 +34,12 @@ REGRAS DE FERRAMENTAS:
 - Não leia novamente um arquivo apenas para confirmar o conteúdo.
 - Não fique em um ciclo de ferramentas tentando obter exatamente a mesma informação.
 - Depois de obter dados suficientes, produza a resposta final.
+- Quando precisar de várias informações independentes entre si (por
+  exemplo, ler 2-3 arquivos diferentes, ou fazer buscas separadas),
+  peça todas as chamadas de ferramenta necessárias na mesma resposta
+  em vez de uma por vez. Isso reduz o número de rodadas e deixa a
+  conversa mais rápida. Só faça chamadas sequenciais quando uma
+  realmente depender do resultado da anterior.
 
 MEMÓRIA TEMPORAL:
 Você possui uma memória temporal persistente local.
@@ -106,7 +113,9 @@ Quando Thomas pedir para criar código e salvar em arquivo:
 1. Gere o código.
 2. Escolha um caminho apropriado.
 3. Use write_file somente para arquivos pequenos. Para HTML, CSS, JS ou
-    Python grandes, use write_file_chunk em blocos curtos ou edit_file.
+    Python grandes, use write_file_chunk em blocos curtos (no máximo
+    ~500 caracteres por chamada) ou edit_file. Blocos maiores arriscam
+    cortar a própria chamada de ferramenta no meio do conteúdo.
 4. Não peça para Thomas copiar e colar manualmente.
 5. Confirme o caminho retornado pela ferramenta.
 
@@ -162,11 +171,36 @@ read_file ou read_file_range depois se faltar um trecho específico.
 """
 
 
-MAX_TOOL_ROUNDS = 4
+# Uma tarefa real de "melhorar o site" normalmente precisa de:
+# inspect_project + 1-2 read_file + várias edit_file/write_file_chunk +
+# validate_file + execute_file. Com 4 rodadas, uma inspeção seguida de
+# leituras redundantes já esgotava o orçamento antes de qualquer edição
+# acontecer, e o modelo chegava na rodada final ainda querendo usar
+# ferramentas — o que causava a falha "resumo final falhou".
+MAX_TOOL_ROUNDS = 10
 
 
 class CancellationRequested(Exception):
     pass
+
+
+# Ferramentas somente-leitura, sem efeitos colaterais e independentes entre
+# si. Quando o modelo pede várias delas na mesma resposta, executamos em
+# paralelo (thread pool) em vez de uma após a outra. Escrita, navegador e
+# execução de arquivo ficam de fora de propósito: têm efeitos colaterais ou
+# dependem de estado compartilhado (ex.: a sessão do browser) e precisam
+# rodar em sequência, na ordem pedida.
+PARALLEL_SAFE_TOOLS = {
+    "read_file",
+    "read_file_range",
+    "get_file_info",
+    "list_directory",
+    "search_files",
+    "web_search",
+    "deep_search",
+    "code_search",
+    "search_memory",
+}
 
 
 def build_tools():
@@ -918,6 +952,61 @@ class CompatibleAgent:
         except (OSError, RuntimeError, TypeError):
             return False
 
+    def _run_tool(
+        self,
+        tool_name: str,
+        arguments: dict,
+    ):
+        """
+        Executa uma única ferramenta (memória ou tool_executor externo)
+        e atualiza o estado da operação. Usado tanto no caminho sequencial
+        quanto no paralelo.
+        """
+
+        try:
+
+            if tool_name == "save_memory":
+                result = self._save_memory(arguments)
+
+            elif tool_name == "search_memory":
+                result = self._search_memory(arguments)
+
+            else:
+                result = self.tool_executor(
+                    tool_name,
+                    arguments,
+                )
+
+            if tool_name == "inspect_project":
+                try:
+                    self._inspected_roots.add(
+                        Path(arguments.get("path", "")).expanduser().resolve()
+                    )
+                except (OSError, RuntimeError, TypeError):
+                    pass
+
+            if tool_name in {"write_file", "write_file_chunk", "edit_file"}:
+                self.operation_state.record_modified(arguments.get("path", ""))
+            elif tool_name in {"read_file", "read_file_range", "inspect_project"}:
+                self.operation_state.record_read(arguments.get("path", ""))
+            elif tool_name == "validate_file":
+                self.operation_state.validation_status = "passed" if "sucesso" in str(result).lower() else "failed"
+            elif tool_name == "execute_file":
+                self.operation_state.execution_status = "passed" if "código de saída: 0" in str(result).lower() else "failed"
+
+            self.operation_state.record_success(tool_name)
+
+            return result
+
+        except Exception as error:
+
+            self.operation_state.record_error(error)
+
+            return (
+                f"Erro ao executar "
+                f"{tool_name}: {error}"
+            )
+
     def _execute_tool_calls(
         self,
         tool_calls,
@@ -951,19 +1040,25 @@ class CompatibleAgent:
             }
         )
 
+        # ============================================================
+        # SEPARA: já executadas (cache), com erro de parsing, e
+        # pendentes de execução real.
+        # ============================================================
+
+        results_by_id = {}
+        pending = []
+
         for call in tool_calls:
 
             if cancel_event is not None and cancel_event.is_set():
                 return
 
-            tool_key = self._tool_call_key(
-                call
-            )
+            tool_key = self._tool_call_key(call)
             self.operation_state.record_tool(call.function.name)
 
             if tool_key in executed_tool_calls:
 
-                result = tool_results.get(tool_key) or (
+                results_by_id[call.id] = tool_results.get(tool_key) or (
                     "Esta mesma ferramenta com os mesmos argumentos "
                     "já foi executada nesta solicitação. "
                     "Use o resultado anterior em vez de repetir a chamada."
@@ -974,75 +1069,103 @@ class CompatibleAgent:
                     repeated=True,
                 )
 
-            else:
+                continue
 
-                executed_tool_calls.add(
-                    tool_key
+            try:
+                arguments = parse_tool_arguments(
+                    call.function.arguments or "{}"
                 )
 
-                try:
+            except ToolArgumentsError as error:
 
-                    arguments = parse_tool_arguments(
-                        call.function.arguments or "{}"
-                    )
+                executed_tool_calls.add(tool_key)
+                self.operation_state.record_error(error)
 
-                    tool_name = call.function.name
+                result = (
+                    f"Erro ao executar "
+                    f"{call.function.name}: {error}"
+                )
 
-                    if tool_name == "save_memory":
+                tool_results[tool_key] = result
+                results_by_id[call.id] = result
 
-                        result = self._save_memory(
-                            arguments
-                        )
+                ui.chat_tool(call.function.name)
 
-                    elif tool_name == "search_memory":
+                continue
 
-                        result = self._search_memory(
-                            arguments
-                        )
+            executed_tool_calls.add(tool_key)
+            pending.append((call, tool_key, arguments))
 
-                    else:
+        # ============================================================
+        # EXECUÇÃO: chamadas somente-leitura e independentes rodam em
+        # paralelo; o resto (escrita, navegador, execução) roda em
+        # sequência, na ordem em que foram pedidas.
+        # ============================================================
 
-                        result = self.tool_executor(
-                            tool_name,
-                            arguments,
-                        )
+        parallel_batch = [
+            item for item in pending
+            if item[0].function.name in PARALLEL_SAFE_TOOLS
+        ]
+        sequential_batch = [
+            item for item in pending
+            if item[0].function.name not in PARALLEL_SAFE_TOOLS
+        ]
 
-                    if tool_name == "inspect_project":
-                        try:
-                            self._inspected_roots.add(
-                                Path(arguments.get("path", "")).expanduser().resolve()
-                            )
-                        except (OSError, RuntimeError, TypeError):
-                            pass
+        if parallel_batch:
+
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(4, len(parallel_batch))
+            ) as pool:
+
+                futures = {
+                    pool.submit(
+                        self._run_tool,
+                        call.function.name,
+                        arguments,
+                    ): (call, tool_key)
+                    for call, tool_key, arguments in parallel_batch
+                }
+
+                for future in concurrent.futures.as_completed(futures):
+
+                    call, tool_key = futures[future]
+                    result = future.result()
 
                     tool_results[tool_key] = result
+                    results_by_id[call.id] = result
 
-                    if call.function.name in {"write_file", "write_file_chunk", "edit_file"}:
-                        self.operation_state.record_modified(arguments.get("path", ""))
-                    elif call.function.name in {"read_file", "read_file_range", "inspect_project"}:
-                        self.operation_state.record_read(arguments.get("path", ""))
-                    elif call.function.name == "validate_file":
-                        self.operation_state.validation_status = "passed" if "sucesso" in str(result).lower() else "failed"
-                    elif call.function.name == "execute_file":
-                        self.operation_state.execution_status = "passed" if "código de saída: 0" in str(result).lower() else "failed"
-                    self.operation_state.record_success(call.function.name)
+                    ui.chat_tool(call.function.name)
 
-                except Exception as error:
+        for call, tool_key, arguments in sequential_batch:
 
-                    self.operation_state.record_error(error)
+            if cancel_event is not None and cancel_event.is_set():
+                return
 
-                    result = (
-                        f"Erro ao executar "
-                        f"{call.function.name}: {error}"
-                    )
+            result = self._run_tool(
+                call.function.name,
+                arguments,
+            )
 
-                ui.chat_tool(
-                    call.function.name
-                )
+            tool_results[tool_key] = result
+            results_by_id[call.id] = result
 
-            # ========================================================
+            ui.chat_tool(call.function.name)
+
+        # ============================================================
+        # ANEXA MENSAGENS na ordem ORIGINAL das chamadas (independente
+        # da ordem em que foram executadas de fato).
+        # ============================================================
+
+        for call in tool_calls:
+
+            result = results_by_id.get(
+                call.id,
+                "Erro interno: resultado da ferramenta não encontrado.",
+            )
+
+            # --------------------------------------------------------
             # IMAGEM
-            # ========================================================
+            # --------------------------------------------------------
 
             if (
                 isinstance(result, dict)
@@ -1086,9 +1209,9 @@ class CompatibleAgent:
 
                 continue
 
-            # ========================================================
+            # --------------------------------------------------------
             # NORMALIZAÇÃO
-            # ========================================================
+            # --------------------------------------------------------
 
             if not isinstance(
                 result,
@@ -1146,8 +1269,18 @@ class CompatibleAgent:
             kwargs = {
                 "model": self.model,
                 "messages": self.messages,
-                "temperature": 0.4,
-                "max_completion_tokens": 1200,
+                # Decidir QUAL ferramenta chamar e com quais argumentos se
+                # beneficia de menos aleatoriedade: fica mais rápido de
+                # convergir e reduz repetições/leituras desnecessárias.
+                # A rodada final sem ferramentas mantém temperatura maior
+                # para soar mais natural.
+                "temperature": 0.2 if allow_tools else 0.4,
+                # Rodadas com ferramentas liberadas podem precisar gerar um
+                # tool call grande (ex.: write_file_chunk com HTML/CSS/JS
+                # escapado em JSON). 1200 tokens cortava a geração no meio
+                # da string, produzindo JSON truncado e inválido. A rodada
+                # final (sem ferramentas) continua enxuta.
+                "max_completion_tokens": 4096 if allow_tools else 1200,
             }
 
             # ========================================================
@@ -1359,15 +1492,75 @@ class CompatibleAgent:
         except CancellationRequested:
             return
         except Exception as error:
-            ui.chat_notice(
-                "A análise foi concluída, mas o resumo final falhou."
-            )
-            content = (
-                "Analisei os arquivos disponíveis, mas não consegui "
-                "gerar o resumo final agora. Posso continuar a alteração "
-                "a partir do estado já lido."
-            )
-            self.operation_state.record_error(error)
+
+            # ----------------------------------------------------------
+            # O modelo ainda insiste em usar uma ferramenta mesmo com o
+            # orçamento de rodadas esgotado (ex.: quer editar antes de
+            # resumir). Em vez de desistir na hora, damos mais uma
+            # rodada controlada de ferramenta e só então pedimos o
+            # resumo final novamente.
+            # ----------------------------------------------------------
+
+            if self._is_tool_choice_conflict(error):
+
+                try:
+                    retry_kwargs = dict(final_kwargs)
+                    retry_kwargs["tools"] = self.tools
+                    retry_kwargs["tool_choice"] = "auto"
+
+                    retry_response = self._completion(
+                        cancel_event=cancel_event,
+                        **retry_kwargs,
+                    )
+                    retry_message = retry_response.choices[0].message
+
+                    if retry_message.tool_calls:
+
+                        self._execute_tool_calls(
+                            retry_message.tool_calls,
+                            executed_tool_calls,
+                            cancel_event=cancel_event,
+                            tool_results=tool_results,
+                        )
+
+                        final_response = self._completion(
+                            cancel_event=cancel_event,
+                            **final_kwargs,
+                        )
+                        final_message = final_response.choices[0].message
+                        content = self._clean_model_output(
+                            final_message.content or ""
+                        )
+
+                    else:
+                        content = self._clean_model_output(
+                            retry_message.content or ""
+                        )
+
+                except CancellationRequested:
+                    return
+
+                except Exception as retry_error:
+                    ui.chat_notice(
+                        "A análise foi concluída, mas o resumo final falhou."
+                    )
+                    content = (
+                        "Analisei os arquivos disponíveis, mas não consegui "
+                        "gerar o resumo final agora. Posso continuar a alteração "
+                        "a partir do estado já lido."
+                    )
+                    self.operation_state.record_error(retry_error)
+
+            else:
+                ui.chat_notice(
+                    "A análise foi concluída, mas o resumo final falhou."
+                )
+                content = (
+                    "Analisei os arquivos disponíveis, mas não consegui "
+                    "gerar o resumo final agora. Posso continuar a alteração "
+                    "a partir do estado já lido."
+                )
+                self.operation_state.record_error(error)
 
         if cancel_event is not None and cancel_event.is_set():
             return

@@ -72,6 +72,50 @@ def _failed_generation(error) -> str:
         return match.group(2)
 
 
+def _repair_truncated_json(text: str) -> str:
+    """
+    Fecha aspas e chaves/colchetes deixados abertos quando a geração do
+    modelo é cortada no meio do conteúdo (ex.: max_completion_tokens
+    atingido durante um write_file_chunk com um arquivo grande).
+
+    Não tenta validar semântica, apenas devolver algo parseável por
+    json.loads contendo o máximo de conteúdo real possível.
+    """
+
+    text = text.rstrip()
+    in_string = False
+    escape = False
+    stack = []
+
+    for char in text:
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+        else:
+            if char == '"':
+                in_string = True
+            elif char in "{[":
+                stack.append(char)
+            elif char in "}]":
+                if stack:
+                    stack.pop()
+
+    repaired = text
+
+    if in_string:
+        repaired += '"'
+
+    while stack:
+        opener = stack.pop()
+        repaired += "}" if opener == "{" else "]"
+
+    return repaired
+
+
 def recover_tool_call(error):
     generated = _failed_generation(error)
     if not generated:
@@ -87,7 +131,10 @@ def recover_tool_call(error):
     try:
         payload = json.loads(candidate)
     except json.JSONDecodeError:
-        return None
+        try:
+            payload = json.loads(_repair_truncated_json(candidate))
+        except (ValueError, json.JSONDecodeError):
+            return None
 
     name = payload.get("name")
     arguments = payload.get("arguments", {})

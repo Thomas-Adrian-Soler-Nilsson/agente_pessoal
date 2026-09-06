@@ -1113,4 +1113,3 @@ class FileTools:
         if process.returncode == 0:
             return f"Arquivo validado com sucesso: {file_path}"
         return f"Validação falhou (código {process.returncode}).\nSTDOUT:\n{process.stdout}\nSTDERR:\n{process.stderr}"
-. Eu guardei tudo no caminho
