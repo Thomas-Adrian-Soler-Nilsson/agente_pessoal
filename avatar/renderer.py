@@ -1,4 +1,5 @@
 from pathlib import Path
+import queue
 import threading
 import time
 import ctypes
@@ -57,6 +58,7 @@ class AvatarRenderer:
         self._drag_offset = (0, 0)
 
         self._lock = threading.Lock()
+        self._command_queue = queue.Queue()
 
     # ==========================================================
     # START
@@ -226,6 +228,8 @@ class AvatarRenderer:
 
                 if not self.running:
                     break
+
+                self._drain_commands()
 
                 # ------------------------------------------------
                 # UPDATE
@@ -508,8 +512,8 @@ class AvatarRenderer:
             f"[AvatarRenderer] Status: {status}"
         )
 
-        self._play_status_motion(
-            status
+        self._command_queue.put(
+            ("status", status)
         )
 
     # ==========================================================
@@ -541,9 +545,21 @@ class AvatarRenderer:
             f"({intensity:.2f})"
         )
 
-        self._play_expression_motion(
-            expression
+        self._command_queue.put(
+            ("expression", expression)
         )
+
+    def _drain_commands(self):
+        while True:
+            try:
+                command, value = self._command_queue.get_nowait()
+            except queue.Empty:
+                return
+
+            if command == "status":
+                self._play_status_motion(value)
+            elif command == "expression":
+                self._play_expression_motion(value)
 
     # ==========================================================
     # STATUS MOTIONS

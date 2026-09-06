@@ -4,7 +4,6 @@ import threading
 
 from dotenv import load_dotenv
 from prompt_toolkit import prompt as terminal_prompt
-from prompt_toolkit.patch_stdout import patch_stdout
 
 from ui import ui
 from gemini_live.client import GeminiLive
@@ -23,14 +22,7 @@ from tools import web_search as search_web
 # AVATAR — OPCIONAL
 # ============================================================
 
-try:
-    from avatar.avatar import Avatar
-except Exception as error:
-    Avatar = None
-
-    print(
-        f"[Avatar] Indisponível: {error}"
-    )
+Avatar = None
 
 
 load_dotenv()
@@ -61,10 +53,6 @@ class LocalToolExecutor:
         arguments,
     ):
         arguments = arguments or {}
-
-        # ----------------------------------------------------
-        # COMPUTADOR
-        # ----------------------------------------------------
 
         if name == "open_application":
             return self.computer.open_application(
@@ -169,6 +157,12 @@ class LocalToolExecutor:
                 )
             )
 
+        if name == "inspect_project":
+            return self.files.inspect_project(
+                arguments.get("path", ""),
+                arguments.get("max_chars", 24000),
+            )
+
         if name == "search_files":
             return self.files.search_files(
                 arguments.get(
@@ -189,8 +183,15 @@ class LocalToolExecutor:
                 )
             )
 
+        if name == "read_file_range":
+            return self.files.read_file_range(
+                arguments.get("path", ""),
+                arguments.get("start_line", 1),
+                arguments.get("end_line", 200),
+            )
+
         if name == "write_file":
-            return self.files.write_file(
+            result = self.files.write_file(
                 arguments.get(
                     "path",
                     "",
@@ -200,6 +201,35 @@ class LocalToolExecutor:
                     "",
                 ),
             )
+            path = arguments.get("path", "")
+            if (
+                "sucesso" in result.lower()
+                and path.lower().endswith((".py", ".js", ".html", ".htm"))
+            ):
+                result += "\n" + self.files.validate_file(path)
+            return result
+
+        if name == "write_file_chunk":
+            return self.files.write_file_chunk(
+                arguments.get("path", ""),
+                arguments.get("content", ""),
+                arguments.get("append", True),
+            )
+
+        if name == "edit_file":
+            result = self.files.edit_file(
+                arguments.get("path", ""),
+                arguments.get("find", ""),
+                arguments.get("replace", ""),
+                arguments.get("expected_replacements", 1),
+            )
+            path = arguments.get("path", "")
+            if (
+                "sucesso" in result.lower()
+                and path.lower().endswith((".py", ".js", ".html", ".htm"))
+            ):
+                result += "\n" + self.files.validate_file(path)
+            return result
 
         if name == "execute_file":
             return self.files.execute_file(
@@ -207,6 +237,11 @@ class LocalToolExecutor:
                     "path",
                     "",
                 )
+            )
+
+        if name == "validate_file":
+            return self.files.validate_file(
+                arguments.get("path", "")
             )
 
         if name == "get_file_info":
@@ -320,10 +355,35 @@ def _prompt_choice(
 # ============================================================
 
 def _chat_prompt():
-    with patch_stdout(raw=False):
-        return terminal_prompt(
-            "Você › "
-        )
+    return terminal_prompt(
+        "Você › "
+    )
+
+
+def select_avatar_enabled():
+    ui.section("Personalização")
+    ui.dialog(
+        "Modelo 3D",
+        "☐  Exibir modelo 3D\n\n"
+        "O avatar fica desligado por padrão e só será carregado "
+        "se você confirmar esta opção.",
+        subtitle="Recurso opcional · nenhum processamento em segundo plano",
+    )
+
+    while True:
+        choice = ui.prompt(
+            "☐ Exibir modelo 3D [s/N]:"
+        ).strip().lower()
+
+        if choice in {"", "n", "nao", "não", "0"}:
+            ui.status("Modelo 3D: desativado")
+            return False
+
+        if choice in {"s", "sim", "y", "yes", "1"}:
+            ui.ok("Modelo 3D: ativado")
+            return True
+
+        ui.error("Escolha s para exibir ou Enter para manter desativado.")
 
 
 # ============================================================
@@ -923,6 +983,8 @@ def run_text_provider(
     # ========================================================
 
     response_thread = None
+    speech_thread = None
+    response_cancel_event = None
 
     response_lock = threading.Lock()
 
@@ -941,55 +1003,58 @@ def run_text_provider(
     def process_message(
         text,
         current_response_id,
+        cancel_event,
     ):
 
-        nonlocal response_thread
+        nonlocal response_thread, speech_thread
+        acquired = False
 
         try:
+            while not cancel_event.is_set():
+                if agent_lock.acquire(timeout=0.1):
+                    acquired = True
+                    break
 
-            # ------------------------------------------------
-            # AGUARDA O AGENTE FICAR LIVRE
-            # ------------------------------------------------
+            if not acquired or cancel_event.is_set():
+                return
 
-            with agent_lock:
+            with response_lock:
+                if (
+                    current_response_id
+                    != response_id
+                ) or cancel_event.is_set():
+                    return
 
-                # --------------------------------------------
-                # Verifica se a mensagem ainda é a atual
-                # --------------------------------------------
+            if avatar and not cancel_event.is_set():
+                avatar.thinking()
 
-                with response_lock:
+            ui.chat_agent_prefix()
 
-                    if (
-                        current_response_id
-                        != response_id
-                    ):
-                        return
+            if avatar and not cancel_event.is_set():
+                avatar.speaking()
 
-                if avatar:
-                    avatar.thinking()
-
-                ui.agent_prefix()
-
-                if avatar:
-                    avatar.speaking()
-
-                # --------------------------------------------
-                # PROCESSA LLM + TTS
-                # --------------------------------------------
-
-                was_interrupted, spoken = (
-                    tts.speak_stream(
-                        agent.ask_stream(
-                            text
-                        )
-                    )
+            spoken = "".join(
+                agent.ask_stream(
+                    text,
+                    cancel_event=cancel_event,
                 )
+            )
 
-                # --------------------------------------------
-                # GARANTE FIM DE LINHA
-                # --------------------------------------------
+            if cancel_event.is_set():
+                return
 
-                ui.console.print()
+            display_text = tts._speech_text(spoken)
+
+            if display_text:
+                ui.chat_response(display_text)
+
+            speech_thread = threading.Thread(
+                target=tts.speak,
+                args=(spoken,),
+                kwargs={"cancel_event": cancel_event},
+                daemon=True,
+            )
+            speech_thread.start()
 
             # ------------------------------------------------
             # VERIFICA SE A RESPOSTA AINDA É ATUAL
@@ -1002,7 +1067,7 @@ def run_text_provider(
                     == response_id
                 )
 
-            if still_current:
+            if still_current and not cancel_event.is_set():
 
                 recent_context.append(
                     f"Usuário: {text}"
@@ -1013,17 +1078,8 @@ def run_text_provider(
                         f"Agente: {spoken[:500]}"
                     )
 
-                if was_interrupted:
-
-                    if avatar:
-                        avatar.listening()
-
-                    ui.interrupted()
-
-                else:
-
-                    if avatar:
-                        avatar.idle()
+                if avatar:
+                    avatar.idle()
 
         except Exception as error:
 
@@ -1034,7 +1090,7 @@ def run_text_provider(
                     == response_id
                 )
 
-            if still_current:
+            if still_current and not cancel_event.is_set():
 
                 if avatar:
                     avatar.neutral()
@@ -1044,15 +1100,15 @@ def run_text_provider(
                 )
 
         finally:
-
             with response_lock:
-
                 if (
                     current_response_id
                     == response_id
                 ):
 
                     response_thread = None
+            if acquired:
+                agent_lock.release()
 
     # ========================================================
     # LOOP PRINCIPAL
@@ -1087,8 +1143,13 @@ def run_text_provider(
                 # Cancela reprodução atual.
                 with response_lock:
                     response_id += 1
+                    if response_cancel_event is not None:
+                        response_cancel_event.set()
 
                 tts.stop()
+
+                if speech_thread is not None:
+                    speech_thread.join(timeout=0.5)
 
                 if avatar:
                     avatar.listening()
@@ -1156,8 +1217,13 @@ def run_text_provider(
 
                 with response_lock:
                     response_id += 1
+                    if response_cancel_event is not None:
+                        response_cancel_event.set()
 
                 tts.stop()
+
+                if speech_thread is not None:
+                    speech_thread.join(timeout=0.5)
 
                 if avatar:
                     avatar.happy(
@@ -1178,6 +1244,10 @@ def run_text_provider(
 
                 # Invalida resposta anterior.
                 response_id += 1
+                if response_cancel_event is not None:
+                    response_cancel_event.set()
+
+                response_cancel_event = threading.Event()
 
                 current_response_id = (
                     response_id
@@ -1188,17 +1258,23 @@ def run_text_provider(
 
                     tts.stop()
 
+                if speech_thread is not None:
+                    speech_thread.join(timeout=0.5)
+
                 # Cria nova thread.
                 response_thread = threading.Thread(
                     target=process_message,
                     args=(
                         text,
                         current_response_id,
+                        response_cancel_event,
                     ),
                     daemon=True,
                 )
 
                 response_thread.start()
+
+            response_thread.join()
 
     except KeyboardInterrupt:
 
@@ -1212,8 +1288,13 @@ def run_text_provider(
 
         with response_lock:
             response_id += 1
+            if response_cancel_event is not None:
+                response_cancel_event.set()
 
         tts.stop()
+
+        if speech_thread is not None:
+            speech_thread.join(timeout=0.5)
 
         if response_thread is not None:
 
@@ -1461,14 +1542,12 @@ def run_text_mode(
 # ============================================================
 
 def start_avatar():
-
-    if Avatar is None:
-
+    try:
+        from avatar.avatar import Avatar as AvatarClass
+    except Exception as error:
         ui.warn(
-            "Avatar Live2D indisponível. "
-            "Continuando sem avatar."
+            f"Avatar Live2D indisponível: {error}"
         )
-
         return None
 
     try:
@@ -1526,7 +1605,7 @@ def start_avatar():
         # INICIALIZAÇÃO
         # ----------------------------------------------------
 
-        avatar = Avatar()
+        avatar = AvatarClass()
 
         avatar.start()
 
@@ -1581,11 +1660,14 @@ def run():
 
         selection = menu()
 
+        selection["show_avatar"] = select_avatar_enabled()
+
         # ----------------------------------------------------
         # AVATAR
         # ----------------------------------------------------
 
-        avatar = start_avatar()
+        if selection["show_avatar"]:
+            avatar = start_avatar()
 
         # ----------------------------------------------------
         # GEMINI LIVE

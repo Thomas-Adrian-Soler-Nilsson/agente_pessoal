@@ -31,8 +31,8 @@ class OpenRouterAgent:
         client = OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1", default_headers={"HTTP-Referer": "http://localhost", "X-Title": "Agente Pessoal Thomas"})
         self.agent = CompatibleAgent(client, self.model, tool_executor, messages)
 
-    def ask_stream(self, text: str):
-        return self.agent.ask_stream(text)
+    def ask_stream(self, text: str, cancel_event=None):
+        return self.agent.ask_stream(text, cancel_event=cancel_event)
 
     def set_personality(self, personality: str):
         self.agent.set_personality(personality)

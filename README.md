@@ -454,6 +454,16 @@ O programa apresenta um menu semelhante a:
 
 Depois da escolha do provedor, o programa solicita as configurações de STT e TTS disponíveis.
 
+### Avatar 3D opcional
+
+O modelo Live2D fica desativado inicialmente. Depois do menu principal, o programa exibe um diálogo de personalização:
+
+```text
+☐ Exibir modelo 3D [s/N]:
+```
+
+Ao pressionar Enter, a interface continua somente no terminal e o Live2D não é importado nem inicializado. O modelo só é carregado quando a opção é confirmada com `s` ou `sim`.
+
 ---
 
 ## Configuração de voz

@@ -1,5 +1,6 @@
 import os
 import re
+import tempfile
 import unicodedata
 from pathlib import Path
 
@@ -62,6 +63,7 @@ class FileTools:
             ".mypy_cache",
             ".pytest_cache",
         }
+        self._read_cache = {}
 
     # ==========================================================
     # VALIDAR CAMINHO
@@ -341,6 +343,98 @@ class FileTools:
                 f"{error}"
             )
 
+    def inspect_project(
+        self,
+        path: str,
+        max_chars: int = 24000,
+    ) -> str:
+        """Retorna estrutura e arquivos de entrada sem ler o projeto inteiro."""
+        try:
+            root = self._resolve_path(path)
+        except Exception as error:
+            return str(error)
+
+        if not root.exists() or not root.is_dir():
+            suggestion = self._suggest_existing_path(path)
+            if suggestion:
+                return (
+                    f"'{path}' não é uma pasta válida. "
+                    f"Você quis dizer: {suggestion}"
+                )
+            return f"'{path}' não é uma pasta válida."
+
+        relevant_names = {
+            "index.html",
+            "package.json",
+            "pyproject.toml",
+            "requirements.txt",
+            "readme.md",
+            "script.js",
+            "style.css",
+            "app.py",
+        }
+        relevant_extensions = {".html", ".css", ".js", ".py", ".json", ".toml"}
+        ignored = self.skip_dir_names
+        entries = []
+        candidates = []
+
+        try:
+            for item in sorted(root.iterdir(), key=lambda value: value.name.lower()):
+                if item.name.lower() in ignored:
+                    continue
+                label = "[PASTA]" if item.is_dir() else "[ARQUIVO]"
+                entries.append(f"{label} {item.name}")
+                if item.is_file() and (
+                    item.name.lower() in relevant_names
+                    or item.suffix.lower() in relevant_extensions
+                ):
+                    candidates.append(item)
+        except OSError as error:
+            return f"Erro ao inspecionar projeto: {error}"
+
+        output = [
+            f"Projeto: {root}",
+            "Estrutura imediata:",
+            "\n".join(entries[:100]) or "(vazio)",
+            "\nArquivos relevantes:",
+        ]
+        remaining = max(1000, int(max_chars))
+        for file_path in candidates:
+            if remaining <= 0:
+                break
+            try:
+                signature = (file_path.stat().st_mtime_ns, file_path.stat().st_size)
+                cached = self._read_cache.get(str(file_path))
+                content = cached[1] if cached and cached[0] == signature else file_path.read_text(encoding="utf-8", errors="replace")
+                self._read_cache[str(file_path)] = (signature, content)
+                block = f"\n--- {file_path.name} ---\n{content[:remaining]}"
+                output.append(block)
+                remaining -= len(block)
+            except (OSError, UnicodeError) as error:
+                output.append(f"\n--- {file_path.name} ---\nErro: {error}")
+
+        return "\n".join(output)
+
+    def _suggest_existing_path(self, path: str) -> str | None:
+        """Sugere uma pasta existente quando o usuário erra um segmento."""
+        try:
+            raw = os.fspath(path).strip().strip('"').replace('/', '\\')
+            candidate = Path(raw).expanduser()
+            parent = candidate.parent
+            if not parent.exists() or not parent.is_dir():
+                return None
+            wanted = self._normalize_text(candidate.name).replace('_', '')
+            options = []
+            for item in parent.iterdir():
+                if not item.is_dir():
+                    continue
+                name = self._normalize_text(item.name).replace('_', '')
+                if name == wanted or name.startswith(wanted) or wanted.startswith(name):
+                    options.append(item)
+            return str(options[0]) if len(options) == 1 else None
+        except (OSError, RuntimeError, TypeError):
+            return None
+
     # ==========================================================
     # BUSCAR ARQUIVOS
     # ==========================================================
@@ -586,13 +680,19 @@ class FileTools:
                 )
 
             else:
-
-                content = (
-                    file_path.read_text(
+                signature = (
+                    file_path.stat().st_mtime_ns,
+                    file_path.stat().st_size,
+                )
+                cached = self._read_cache.get(str(file_path))
+                if cached and cached[0] == signature:
+                    content = cached[1]
+                else:
+                    content = file_path.read_text(
                         encoding="utf-8",
                         errors="replace",
                     )
-                )
+                    self._read_cache[str(file_path)] = (signature, content)
 
             if not content.strip():
 
@@ -659,6 +759,22 @@ class FileTools:
                 f"{error}"
             )
 
+    def read_file_range(
+        self,
+        path: str,
+        start_line: int = 1,
+        end_line: int = 200,
+    ) -> str:
+        try:
+            file_path = self._resolve_path(path)
+            lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            start = max(1, int(start_line))
+            end = max(start, min(len(lines), int(end_line)))
+            selected = lines[start - 1:end]
+            return f"Arquivo: {file_path}\nLinhas {start}-{end}:\n\n" + "\n".join(selected)
+        except Exception as error:
+            return f"Erro ao ler faixa do arquivo: {error}"
+
     # ==========================================================
     # ESCREVER / CRIAR ARQUIVO
     # ==========================================================
@@ -687,11 +803,25 @@ class FileTools:
                 exist_ok=True,
             )
 
-            file_path.write_text(
-                str(content),
+            temporary = tempfile.NamedTemporaryFile(
+                mode="w",
                 encoding="utf-8",
                 newline="",
+                delete=False,
+                dir=str(file_path.parent),
+                suffix=file_path.suffix + ".tmp",
             )
+            temporary_path = Path(temporary.name)
+            try:
+                with temporary:
+                    temporary.write(str(content))
+                os.replace(temporary_path, file_path)
+            finally:
+                if temporary_path.exists():
+                    temporary_path.unlink()
+
+            if file_path.read_text(encoding="utf-8") != str(content):
+                return "Erro: o arquivo foi escrito, mas a verificação falhou."
 
             return (
                 f"Arquivo criado/atualizado com sucesso:\n"
@@ -703,6 +833,39 @@ class FileTools:
             return (
                 f"Erro ao escrever arquivo: {error}"
             )
+
+    def write_file_chunk(
+        self,
+        path: str,
+        content: str,
+        append: bool = True,
+    ) -> str:
+        try:
+            file_path = self._resolve_path(path)
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            mode = "a" if append else "w"
+            with file_path.open(mode, encoding="utf-8", newline="") as file:
+                file.write(str(content))
+            return f"Trecho salvo e verificado em {file_path} ({file_path.stat().st_size} bytes)."
+        except Exception as error:
+            return f"Erro ao salvar trecho: {error}"
+
+    def edit_file(
+        self,
+        path: str,
+        find: str,
+        replace: str,
+        expected_replacements: int = 1,
+    ) -> str:
+        try:
+            file_path = self._resolve_path(path)
+            original = file_path.read_text(encoding="utf-8")
+            occurrences = original.count(find)
+            if occurrences != expected_replacements:
+                return f"Edição não aplicada: esperado {expected_replacements} ocorrência(s), encontrado {occurrences}."
+            return self.write_file(path, original.replace(find, replace))
+        except Exception as error:
+            return f"Erro ao editar arquivo: {error}"
 
     # ==========================================================
     # INFO
@@ -783,6 +946,14 @@ class FileTools:
         extension = (
             file_path.suffix.lower()
         )
+
+        if extension in {".py", ".js", ".html", ".htm"}:
+            validation = self.validate_file(str(file_path))
+            if "validado com sucesso" not in validation.lower():
+                return (
+                    f"Execução bloqueada: validação falhou.\n"
+                    f"{validation}"
+                )
 
         # ------------------------------------------------------
         # PYTHON
@@ -906,3 +1077,40 @@ class FileTools:
             f"O arquivo foi encontrado em:\n"
             f"{file_path}"
         )
+
+    def validate_file(self, path: str) -> str:
+        import shutil
+        import subprocess
+        import sys
+
+        try:
+            file_path = self._resolve_path(path)
+        except Exception as error:
+            return str(error)
+
+        if not file_path.is_file():
+            return f"O arquivo '{path}' não existe ou não é um arquivo."
+
+        extension = file_path.suffix.lower()
+        if extension == ".py":
+            command = [sys.executable, "-m", "py_compile", str(file_path)]
+        elif extension == ".js":
+            node = shutil.which("node")
+            if not node:
+                return "Node.js não está instalado para validar JavaScript."
+            command = [node, "--check", str(file_path)]
+        elif extension in {".html", ".htm"}:
+            from html.parser import HTMLParser
+            try:
+                HTMLParser().feed(file_path.read_text(encoding="utf-8", errors="replace"))
+                return f"HTML validado com sucesso: {file_path}"
+            except Exception as error:
+                return f"Erro de validação HTML: {error}"
+        else:
+            return f"Não há validador configurado para '{extension}'."
+
+        process = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        if process.returncode == 0:
+            return f"Arquivo validado com sucesso: {file_path}"
+        return f"Validação falhou (código {process.returncode}).\nSTDOUT:\n{process.stdout}\nSTDERR:\n{process.stderr}"
+. Eu guardei tudo no caminho

@@ -1,7 +1,10 @@
+import copy
+
 from ui import ui
 from .groq_provider import GroqAgent
 from .mistral_provider import MistralAgent, available_models as mistral_models
 from .nvidia_provider import NvidiaAgent, available_models as nvidia_models
+from .ollama_provider import OllamaAgent
 from .openrouter_provider import OpenRouterAgent, available_models as openrouter_models
 
 
@@ -17,6 +20,9 @@ class ProviderRouter:
 
     def nvidia(self, model=None):
         return NvidiaAgent(self.tool_executor, model=model)
+
+    def ollama(self, model=None):
+        return OllamaAgent(self.tool_executor, model=model)
 
     def mistral(self, model=None):
         return MistralAgent(self.tool_executor, model=model)
@@ -41,12 +47,18 @@ class AutomaticAgent:
         if self.current is not None:
             self.current.set_personality(personality)
 
-    def ask_stream(self, text: str):
+    def ask_stream(self, text: str, cancel_event=None):
+        base_messages = copy.deepcopy(self.messages)
+
+        if cancel_event is not None and cancel_event.is_set():
+            return
+
         try:
-            self.current = GroqAgent(self.tool_executor, self.groq_model, self.messages)
+            self.current = GroqAgent(self.tool_executor, self.groq_model, base_messages)
             self.current.set_personality(self.personality)
-            self.messages = self.current.agent.messages
-            yield from self.current.ask_stream(text)
+            yield from self.current.ask_stream(text, cancel_event=cancel_event)
+            if cancel_event is None or not cancel_event.is_set():
+                self.messages = self.current.agent.messages
             return
         except Exception as error:
             ui.warn(f"Groq falhou: {error}")
@@ -54,11 +66,14 @@ class AutomaticAgent:
         candidates = [self.mistral_model] if self.mistral_model else []
         candidates.extend(model for model in mistral_models() if model not in candidates)
         for model in candidates:
+            if cancel_event is not None and cancel_event.is_set():
+                return
             try:
-                self.current = MistralAgent(self.tool_executor, model, self.messages)
+                self.current = MistralAgent(self.tool_executor, model, base_messages)
                 self.current.set_personality(self.personality)
-                self.messages = self.current.agent.messages
-                yield from self.current.ask_stream(text)
+                yield from self.current.ask_stream(text, cancel_event=cancel_event)
+                if cancel_event is None or not cancel_event.is_set():
+                    self.messages = self.current.agent.messages
                 return
             except Exception as error:
                 ui.warn(f"Mistral ({model}) falhou: {error}")
@@ -66,11 +81,14 @@ class AutomaticAgent:
         candidates = [self.openrouter_model] if self.openrouter_model else []
         candidates.extend(model for model in openrouter_models() if model not in candidates)
         for model in candidates:
+            if cancel_event is not None and cancel_event.is_set():
+                return
             try:
-                self.current = OpenRouterAgent(self.tool_executor, model, self.messages)
+                self.current = OpenRouterAgent(self.tool_executor, model, base_messages)
                 self.current.set_personality(self.personality)
-                self.messages = self.current.agent.messages
-                yield from self.current.ask_stream(text)
+                yield from self.current.ask_stream(text, cancel_event=cancel_event)
+                if cancel_event is None or not cancel_event.is_set():
+                    self.messages = self.current.agent.messages
                 return
             except Exception as error:
                 ui.warn(f"OpenRouter ({model}) falhou: {error}")
@@ -78,11 +96,14 @@ class AutomaticAgent:
         candidates = [self.nvidia_model] if self.nvidia_model else []
         candidates.extend(model for model in nvidia_models() if model not in candidates)
         for model in candidates:
+            if cancel_event is not None and cancel_event.is_set():
+                return
             try:
-                self.current = NvidiaAgent(self.tool_executor, model, self.messages)
+                self.current = NvidiaAgent(self.tool_executor, model, base_messages)
                 self.current.set_personality(self.personality)
-                self.messages = self.current.agent.messages
-                yield from self.current.ask_stream(text)
+                yield from self.current.ask_stream(text, cancel_event=cancel_event)
+                if cancel_event is None or not cancel_event.is_set():
+                    self.messages = self.current.agent.messages
                 return
             except Exception as error:
                 ui.warn(f"NVIDIA ({model}) falhou: {error}")

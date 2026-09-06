@@ -57,8 +57,8 @@ class NvidiaAgent:
         )
         self.agent = CompatibleAgent(client, self.model, tool_executor, messages)
 
-    def ask_stream(self, text: str):
-        return self.agent.ask_stream(text)
+    def ask_stream(self, text: str, cancel_event=None):
+        return self.agent.ask_stream(text, cancel_event=cancel_event)
 
     def set_personality(self, personality: str):
         self.agent.set_personality(personality)

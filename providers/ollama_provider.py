@@ -49,5 +49,5 @@ class OllamaAgent:
     def set_personality(self, personality):
         self.agent.set_personality(personality)
 
-    def ask_stream(self, text):
-        yield from self.agent.ask_stream(text)
+    def ask_stream(self, text, cancel_event=None):
+        yield from self.agent.ask_stream(text, cancel_event=cancel_event)

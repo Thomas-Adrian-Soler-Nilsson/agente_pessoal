@@ -1,9 +1,18 @@
 import json
 import time
 from typing import Callable
+from pathlib import Path
 
 from ui import ui
 from memory.temporal_memory import TemporalMemory
+from tools.tool_call_parser import (
+    ToolArgumentsError,
+    failed_tool_name,
+    is_tool_json_error,
+    parse_tool_arguments,
+    recover_tool_call,
+)
+from tools.operation_state import OperationState
 
 
 SYSTEM_PROMPT = """
@@ -86,11 +95,18 @@ Use list_directory para mostrar o conteúdo de uma pasta.
 
 CRIAÇÃO E EXECUÇÃO DE CÓDIGO:
 
+Antes de alterar um projeto, siga esta ordem: inspecione a estrutura, leia
+somente os arquivos relevantes, altere incrementalmente, valide a gravação,
+execute quando solicitado e verifique stdout, stderr e código de saída.
+Não reconstrua arquivos grandes inteiros se edit_file ou write_file_chunk
+resolverem a alteração.
+
 Quando Thomas pedir para criar código e salvar em arquivo:
 
 1. Gere o código.
 2. Escolha um caminho apropriado.
-3. Use write_file para criar o arquivo.
+3. Use write_file somente para arquivos pequenos. Para HTML, CSS, JS ou
+    Python grandes, use write_file_chunk em blocos curtos ou edit_file.
 4. Não peça para Thomas copiar e colar manualmente.
 5. Confirme o caminho retornado pela ferramenta.
 
@@ -100,8 +116,11 @@ Quando Thomas pedir para executar, testar ou rodar um arquivo:
 2. Use execute_file.
 3. Analise STDOUT, STDERR e código de saída.
 4. Se houver erro, explique o erro.
-5. Quando possível, corrija o arquivo usando write_file.
+5. Quando possível, corrija o arquivo usando edit_file ou write_file_chunk.
 6. Execute novamente para validar a correção.
+
+Depois de write_file, write_file_chunk ou edit_file, confirme o resultado
+com get_file_info ou uma leitura objetiva antes de declarar concluído.
 
 Para páginas HTML:
 - crie os arquivos necessários;
@@ -138,10 +157,16 @@ Se o resultado estiver vazio, informe que não encontrou dados e peça um
 caminho ou nome mais específico.
 
 Depois de uma operação de arquivo, descreva somente o que foi retornado agora.
+Para analisar ou melhorar um projeto, use inspect_project primeiro. Só use
+read_file ou read_file_range depois se faltar um trecho específico.
 """
 
 
 MAX_TOOL_ROUNDS = 4
+
+
+class CancellationRequested(Exception):
+    pass
 
 
 def build_tools():
@@ -272,6 +297,20 @@ def build_tools():
             ["path"],
         ),
         (
+            "inspect_project",
+            (
+                "Inspeciona rapidamente um projeto: lista a estrutura imediata "
+                "e lê somente arquivos de entrada relevantes. Use primeiro "
+                "para analisar ou melhorar um projeto. Não combine com "
+                "list_directory/read_file na mesma inspeção."
+            ),
+            {
+                "path": {"type": "string"},
+                "max_chars": {"type": "integer"},
+            },
+            ["path"],
+        ),
+        (
             "search_files",
             "Procura arquivos pelo nome em uma pasta.",
             {
@@ -300,13 +339,22 @@ def build_tools():
             ["path"],
         ),
         (
+            "read_file_range",
+            "Lê somente um intervalo de linhas de um arquivo grande.",
+            {
+                "path": {"type": "string"},
+                "start_line": {"type": "integer"},
+                "end_line": {"type": "integer"},
+            },
+            ["path"],
+        ),
+        (
             "write_file",
             (
-                "Cria ou sobrescreve um arquivo dentro das pastas "
+                "Cria ou sobrescreve um arquivo pequeno dentro das pastas "
                 "permitidas pelo agente. Use quando Thomas pedir para "
-                "criar, salvar, atualizar ou escrever código em um arquivo. "
-                "O conteúdo deve ser fornecido integralmente. "
-                "Não peça para Thomas copiar e colar manualmente."
+                "criar um arquivo. Para arquivos grandes, prefira "
+                "write_file_chunk ou edit_file."
             ),
             {
                 "path": {
@@ -318,11 +366,39 @@ def build_tools():
                 "content": {
                     "type": "string",
                     "description": (
-                        "Conteúdo completo que será gravado no arquivo."
+                            "Conteúdo curto. Limite aproximado de 600 caracteres; "
+                            "para código grande use write_file_chunk em várias chamadas."
                     ),
                 },
             },
             ["path", "content"],
+        ),
+        (
+            "write_file_chunk",
+            (
+                "Escreve um trecho menor em um arquivo existente ou novo. "
+                "Use para dividir arquivos grandes em partes."
+            ),
+            {
+                "path": {"type": "string"},
+                "content": {"type": "string"},
+                "append": {"type": "boolean"},
+            },
+            ["path", "content"],
+        ),
+        (
+            "edit_file",
+            (
+                "Substitui exatamente um trecho existente, preservando o restante. "
+                "Use para alterações localizadas e seguras."
+            ),
+            {
+                "path": {"type": "string"},
+                "find": {"type": "string"},
+                "replace": {"type": "string"},
+                "expected_replacements": {"type": "integer"},
+            },
+            ["path", "find", "replace"],
         ),
         (
             "execute_file",
@@ -341,6 +417,12 @@ def build_tools():
                     ),
                 },
             },
+            ["path"],
+        ),
+        (
+            "validate_file",
+            "Valida sintaxe de Python/JavaScript ou estrutura básica de HTML antes da execução.",
+            {"path": {"type": "string"}},
             ["path"],
         ),
         (
@@ -464,6 +546,8 @@ class CompatibleAgent:
         self.tools = build_tools()
 
         self.temporal_memory = TemporalMemory()
+        self.operation_state = OperationState()
+        self._inspected_roots = set()
 
         self.messages = (
             messages
@@ -593,12 +677,20 @@ class CompatibleAgent:
     # COMPLETION
     # ============================================================
 
-    def _completion(self, **kwargs):
+    def _completion(self, cancel_event=None, **kwargs):
         for attempt in range(2):
+            if cancel_event is not None and cancel_event.is_set():
+                raise CancellationRequested()
+
             try:
-                return self.client.chat.completions.create(
+                response = self.client.chat.completions.create(
                     **kwargs
                 )
+
+                if cancel_event is not None and cancel_event.is_set():
+                    raise CancellationRequested()
+
+                return response
 
             except Exception as error:
 
@@ -634,7 +726,11 @@ class CompatibleAgent:
                     "Tentando novamente em 5 segundos..."
                 )
 
-                time.sleep(5)
+                if cancel_event is not None:
+                    if cancel_event.wait(5):
+                        raise CancellationRequested()
+                else:
+                    time.sleep(5)
 
     # ============================================================
     # MEMÓRIA
@@ -694,9 +790,8 @@ class CompatibleAgent:
             importance=importance,
         )
 
-        ui.console.print(
-            f"\n[info]🧠 IA → memória salva[/info] "
-            f"[muted]\\[{memory['category']}][/muted]"
+        ui.chat_tool(
+            f"memória salva [{memory['category']}]"
         )
 
         return (
@@ -748,9 +843,8 @@ class CompatibleAgent:
         )
 
         if not memories:
-            ui.console.print(
-                f"\n[info]🧠 IA → memória:[/info] "
-                f"nenhum resultado para '{query}'"
+            ui.chat_tool(
+                f"memória: nenhum resultado para '{query}'"
             )
 
             return (
@@ -758,9 +852,8 @@ class CompatibleAgent:
                 f"para: {query}"
             )
 
-        ui.console.print(
-            f"\n[info]🧠 IA → memória:[/info] "
-            f"{len(memories)} resultado(s)"
+        ui.chat_tool(
+            f"memória: {len(memories)} resultado(s)"
         )
 
         result = []
@@ -795,7 +888,7 @@ class CompatibleAgent:
 
     def _tool_call_key(self, call) -> str:
         try:
-            arguments = json.loads(
+            arguments = parse_tool_arguments(
                 call.function.arguments or "{}"
             )
 
@@ -805,7 +898,7 @@ class CompatibleAgent:
                 sort_keys=True,
             )
 
-        except Exception:
+        except ToolArgumentsError:
             normalized_arguments = (
                 call.function.arguments or "{}"
             )
@@ -815,14 +908,28 @@ class CompatibleAgent:
             f"{normalized_arguments}"
         )
 
+    def _was_inspected(self, path: str) -> bool:
+        try:
+            candidate = Path(path).expanduser().resolve()
+            return any(
+                candidate.parent == root
+                for root in self._inspected_roots
+            )
+        except (OSError, RuntimeError, TypeError):
+            return False
+
     def _execute_tool_calls(
         self,
         tool_calls,
         executed_tool_calls=None,
+        cancel_event=None,
+        tool_results=None,
     ):
 
         if executed_tool_calls is None:
             executed_tool_calls = set()
+        if tool_results is None:
+            tool_results = {}
 
         payload = [
             {
@@ -846,21 +953,25 @@ class CompatibleAgent:
 
         for call in tool_calls:
 
+            if cancel_event is not None and cancel_event.is_set():
+                return
+
             tool_key = self._tool_call_key(
                 call
             )
+            self.operation_state.record_tool(call.function.name)
 
             if tool_key in executed_tool_calls:
 
-                result = (
+                result = tool_results.get(tool_key) or (
                     "Esta mesma ferramenta com os mesmos argumentos "
                     "já foi executada nesta solicitação. "
                     "Use o resultado anterior em vez de repetir a chamada."
                 )
 
-                ui.console.print(
-                    f"\n[warn]🔁 Ferramenta repetida ignorada:[/warn] "
-                    f"{call.function.name}()"
+                ui.chat_tool(
+                    call.function.name,
+                    repeated=True,
                 )
 
             else:
@@ -871,7 +982,7 @@ class CompatibleAgent:
 
                 try:
 
-                    arguments = json.loads(
+                    arguments = parse_tool_arguments(
                         call.function.arguments or "{}"
                     )
 
@@ -896,16 +1007,37 @@ class CompatibleAgent:
                             arguments,
                         )
 
+                    if tool_name == "inspect_project":
+                        try:
+                            self._inspected_roots.add(
+                                Path(arguments.get("path", "")).expanduser().resolve()
+                            )
+                        except (OSError, RuntimeError, TypeError):
+                            pass
+
+                    tool_results[tool_key] = result
+
+                    if call.function.name in {"write_file", "write_file_chunk", "edit_file"}:
+                        self.operation_state.record_modified(arguments.get("path", ""))
+                    elif call.function.name in {"read_file", "read_file_range", "inspect_project"}:
+                        self.operation_state.record_read(arguments.get("path", ""))
+                    elif call.function.name == "validate_file":
+                        self.operation_state.validation_status = "passed" if "sucesso" in str(result).lower() else "failed"
+                    elif call.function.name == "execute_file":
+                        self.operation_state.execution_status = "passed" if "código de saída: 0" in str(result).lower() else "failed"
+                    self.operation_state.record_success(call.function.name)
+
                 except Exception as error:
+
+                    self.operation_state.record_error(error)
 
                     result = (
                         f"Erro ao executar "
                         f"{call.function.name}: {error}"
                     )
 
-                ui.console.print(
-                    f"\n[info]🔧 IA →[/info] "
-                    f"[bold]{call.function.name}()[/bold]"
+                ui.chat_tool(
+                    call.function.name
                 )
 
             # ========================================================
@@ -982,7 +1114,11 @@ class CompatibleAgent:
     def ask_stream(
         self,
         user_message: str,
+        cancel_event=None,
     ):
+
+        if cancel_event is not None and cancel_event.is_set():
+            return
 
         self.messages.append(
             {
@@ -992,10 +1128,15 @@ class CompatibleAgent:
         )
 
         executed_tool_calls = set()
+        tool_results = {}
+        json_recovery_attempts = 0
 
         for round_index in range(
             MAX_TOOL_ROUNDS
         ):
+
+            if cancel_event is not None and cancel_event.is_set():
+                return
 
             allow_tools = (
                 round_index
@@ -1032,22 +1173,70 @@ class CompatibleAgent:
             try:
 
                 response = self._completion(
+                    cancel_event=cancel_event,
                     **kwargs
                 )
 
+            except CancellationRequested:
+                return
+
             except Exception as error:
+
+                recovered_call = recover_tool_call(error)
+
+                if allow_tools and recovered_call is not None:
+                    ui.chat_notice(
+                        "Argumentos da ferramenta reparados; continuando."
+                    )
+                    self._execute_tool_calls(
+                        [recovered_call],
+                        executed_tool_calls,
+                        cancel_event=cancel_event,
+                        tool_results=tool_results,
+                    )
+                    continue
+
+                if (
+                    allow_tools
+                    and is_tool_json_error(error)
+                    and json_recovery_attempts < 2
+                ):
+                    json_recovery_attempts += 1
+                    failed_name = failed_tool_name(error)
+                    ui.chat_notice(
+                        "A chamada de ferramenta veio com JSON inválido. "
+                        "Refazendo em formato seguro."
+                    )
+                    self.messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "A chamada anterior falhou por JSON inválido. "
+                                f"Não use {failed_name or 'write_file'} com conteúdo grande. "
+                                "Para arquivos grandes, use write_file_chunk em blocos "
+                                "curtos ou edit_file para alterações localizadas. "
+                                "Continue a tarefa a partir dos arquivos já analisados."
+                            ),
+                        }
+                    )
+                    continue
 
                 if self._is_tool_choice_conflict(
                     error
                 ):
-                    yield (
-                        "Desculpa, me perdi tentando usar uma "
-                        "ferramenta nessa resposta. "
-                        "Pode repetir o pedido de um jeito mais direto?"
-                    )
-                    return
+                    if not allow_tools:
+                        kwargs["tools"] = self.tools
+                        kwargs["tool_choice"] = "auto"
+                        allow_tools = True
+                        response = self._completion(
+                            cancel_event=cancel_event,
+                            **kwargs
+                        )
+                    else:
+                        raise
 
-                raise
+                else:
+                    raise
 
             message = (
                 response
@@ -1059,10 +1248,23 @@ class CompatibleAgent:
             # TOOL CALL
             # ========================================================
 
-            if (
-                allow_tools
-                and message.tool_calls
-            ):
+            if message.tool_calls:
+
+                redundant_reads = bool(message.tool_calls)
+                for pending_call in message.tool_calls:
+                    if pending_call.function.name not in {"read_file", "read_file_range"}:
+                        redundant_reads = False
+                        break
+                    try:
+                        pending_args = parse_tool_arguments(
+                            pending_call.function.arguments or "{}"
+                        )
+                    except ToolArgumentsError:
+                        redundant_reads = False
+                        break
+                    if not self._was_inspected(pending_args.get("path", "")):
+                        redundant_reads = False
+                        break
 
                 previous_count = len(
                     executed_tool_calls
@@ -1071,7 +1273,20 @@ class CompatibleAgent:
                 self._execute_tool_calls(
                     message.tool_calls,
                     executed_tool_calls,
+                    cancel_event=cancel_event,
+                    tool_results=tool_results,
                 )
+
+                if redundant_reads:
+                    ui.chat_notice(
+                        "Arquivos já cobertos pela inspeção; preservando "
+                        "rodadas para edição e validação."
+                    )
+                    # A leitura redundante não encerra a solicitação. O
+                    # modelo ainda precisa receber o resultado da ferramenta
+                    # e pode precisar editar os arquivos em seguida.
+                    # Repetições idênticas continuam sendo interrompidas pelo
+                    # teste de `current_count == previous_count` abaixo.
 
                 current_count = len(
                     executed_tool_calls
@@ -1081,10 +1296,10 @@ class CompatibleAgent:
 
                     ui.warn(
                         "Nenhuma ferramenta nova foi executada. "
-                        "Encerrando o ciclo de ferramentas."
+                        "Gerando o resumo com os dados já obtidos."
                     )
 
-                    allow_tools = False
+                    break
 
                 continue
 
@@ -1095,6 +1310,9 @@ class CompatibleAgent:
             content = self._clean_model_output(
                 message.content or ""
             )
+
+            if cancel_event is not None and cancel_event.is_set():
+                return
 
             self.messages.append(
                 {
@@ -1108,9 +1326,63 @@ class CompatibleAgent:
                 yield content
                 return
 
-            yield (
-                "Não consegui gerar uma resposta agora. "
-                "Tente novamente ou reformule o pedido."
+            ui.chat_notice(
+                "O provider retornou uma resposta vazia. Gerando um resumo de recuperação."
             )
+            break
 
+        if cancel_event is not None and cancel_event.is_set():
             return
+
+        final_kwargs = {
+            "model": self.model,
+            "messages": self.messages,
+            "temperature": 0.3,
+            "max_completion_tokens": 1200,
+        }
+
+        if self.model in {
+            "openai/gpt-oss-20b",
+            "openai/gpt-oss-120b",
+        }:
+            final_kwargs["include_reasoning"] = False
+
+        try:
+            final_response = self._completion(
+                cancel_event=cancel_event,
+                **final_kwargs,
+            )
+            final_message = final_response.choices[0].message
+            content = self._clean_model_output(
+                final_message.content or ""
+            )
+        except CancellationRequested:
+            return
+        except Exception as error:
+            ui.chat_notice(
+                "A análise foi concluída, mas o resumo final falhou."
+            )
+            content = (
+                "Analisei os arquivos disponíveis, mas não consegui "
+                "gerar o resumo final agora. Posso continuar a alteração "
+                "a partir do estado já lido."
+            )
+            self.operation_state.record_error(error)
+
+        if cancel_event is not None and cancel_event.is_set():
+            return
+
+        self.messages.append(
+            {
+                "role": "assistant",
+                "content": content,
+            }
+        )
+
+        if content:
+            yield content
+        else:
+            yield (
+                "Analisei os arquivos disponíveis, mas o provider não retornou "
+                "texto. Posso continuar a melhoria a partir do estado já lido."
+            )

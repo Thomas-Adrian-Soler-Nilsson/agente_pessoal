@@ -15,7 +15,6 @@ import edge_tts
 import numpy as np
 import requests
 import sounddevice as sd
-from ui import ui
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
@@ -308,6 +307,12 @@ class TextToSpeech:
         text = re.sub(
             r"\s+",
             " ",
+            text,
+        )
+
+        text = re.sub(
+            r"\s+([,.;!?])",
+            r"\1",
             text,
         )
 
@@ -612,7 +617,11 @@ class TextToSpeech:
     def speak(
         self,
         text: str,
+        cancel_event=None,
     ):
+        if cancel_event is not None and cancel_event.is_set():
+            return
+
         text = self._speech_text(
             text,
             keep_fish_tags=self.provider == "fish",
@@ -642,7 +651,10 @@ class TextToSpeech:
                 )
             )
 
-            if self.stopped:
+            if self.stopped or (
+                cancel_event is not None
+                and cancel_event.is_set()
+            ):
                 return
 
             pygame.mixer.music.load(
@@ -664,6 +676,10 @@ class TextToSpeech:
             while (
                 pygame.mixer.music.get_busy()
                 and not self.stopped
+                and not (
+                    cancel_event is not None
+                    and cancel_event.is_set()
+                )
             ):
                 time.sleep(0.05)
 
@@ -785,6 +801,7 @@ class TextToSpeech:
     def speak_stream(
         self,
         chunks,
+        cancel_event=None,
     ):
         """
         Recebe chunks do LLM e transforma o texto em blocos naturais
@@ -813,18 +830,14 @@ class TextToSpeech:
         buffer = ""
 
         for chunk in chunks:
-            if self.stopped:
+            if self.stopped or (
+                cancel_event is not None
+                and cancel_event.is_set()
+            ):
                 break
 
             if not chunk:
                 continue
-
-            ui.console.print(
-                chunk,
-                style="agent",
-                end="",
-                highlight=False,
-            )
 
             collected.append(chunk)
             buffer += chunk
@@ -845,7 +858,8 @@ class TextToSpeech:
 
                 if block.strip():
                     self.speak(
-                        block.strip()
+                        block.strip(),
+                        cancel_event=cancel_event,
                     )
 
         # ---------------------------------------------------------
@@ -857,6 +871,10 @@ class TextToSpeech:
         while (
             buffer.strip()
             and not self.stopped
+            and not (
+                cancel_event is not None
+                and cancel_event.is_set()
+            )
         ):
             block, remaining = self._extract_speech_block(
                 buffer,
@@ -869,7 +887,8 @@ class TextToSpeech:
             buffer = remaining
 
             self.speak(
-                block.strip()
+                block.strip(),
+                cancel_event=cancel_event,
             )
 
         return (
