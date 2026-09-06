@@ -3,6 +3,7 @@ faster-whisper==1.2.1
 google-genai==2.19.0
 groq==1.6.0
 huggingface-hub
+gradio_client
 live2d-py
 numpy==2.5.2
 openai==3.3.1
@@ -21,4 +22,3 @@ rich==13.9.4
 sounddevice==0.5.6
 trafilatura
 ddgs
-
