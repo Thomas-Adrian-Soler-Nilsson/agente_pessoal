@@ -12,9 +12,15 @@ from providers.huggingface_catalog import available_models as hf_models
 from screen.screen import Screen
 from tools.computer import ComputerTools
 from tools.browser import BrowserTools
+from tools.developer import DeveloperTools
 from tools.files import FileTools
 from tools.image_generation import ImageGenerator
 from tools.huggingface_multimodal import hf_tool_executor
+from tools.remote_3d import generate_rodin, generate_trify
+from tools.nvidia_trellis import generate_nvidia_trellis
+from tools.three_d_router import generate_3d_auto
+from tools.threews_3d import generate_threews
+from tools.triposr import generate_triposr
 from webcam.webcam import Webcam
 from tools.web_search import search_and_read
 from tools import web_search as search_web
@@ -30,6 +36,7 @@ class LocalToolExecutor:
         self.computer = ComputerTools()
         self.browser = BrowserTools()
         self.files = FileTools()
+        self.developer = DeveloperTools(self.files)
         self.images = ImageGenerator()
 
     def execute(self, name, arguments):
@@ -82,6 +89,42 @@ class LocalToolExecutor:
             return self.files.execute_file(arguments.get("path", ""))
         if name == "validate_file":
             return self.files.validate_file(arguments.get("path", ""))
+        if name == "run_terminal":
+            return self.developer.run_terminal(
+                arguments.get("command", ""),
+                arguments.get("cwd"),
+                arguments.get("timeout", 120),
+                arguments.get("input_text"),
+            )
+        if name == "open_terminal":
+            return self.developer.open_terminal(
+                arguments.get("command", ""),
+                arguments.get("cwd"),
+            )
+        if name == "detect_runtimes":
+            return self.developer.detect_runtimes()
+        if name == "run_code_file":
+            return self.developer.run_code_file(
+                arguments.get("path", ""),
+                arguments.get("arguments", ""),
+                arguments.get("timeout", 120),
+                arguments.get("input_text"),
+            )
+        if name == "install_dependencies":
+            return self.developer.install_dependencies(
+                arguments.get("path", "workspace"),
+                arguments.get("manager", "auto"),
+                arguments.get("packages", ""),
+                arguments.get("dev", False),
+                arguments.get("timeout", 900),
+            )
+        if name == "download_file":
+            return self.developer.download_file(
+                arguments.get("url", ""),
+                arguments.get("path", ""),
+                arguments.get("overwrite", False),
+                arguments.get("timeout", 120),
+            )
         if name == "get_file_info":
             return self.files.get_file_info(arguments.get("path", ""))
         if name == "capture_screen":
@@ -90,6 +133,38 @@ class LocalToolExecutor:
             return {"type": "image", "data": self.webcam.capture(), "description": "Captura atual da webcam."}
         if name == "generate_image":
             return self.images.generate(arguments.get("prompt", ""))
+        if name == "generate_3d_local":
+            return generate_triposr(
+                arguments.get("image_path", ""),
+                arguments.get("timeout"),
+            )
+        if name == "generate_3d_rodin":
+            return generate_rodin(
+                arguments.get("prompt", ""),
+                arguments.get("image_path"),
+            )
+        if name == "generate_3d_trify":
+            return generate_trify(
+                arguments.get("prompt", ""),
+                arguments.get("image_path"),
+            )
+        if name == "generate_3d_free":
+            return generate_threews(
+                arguments.get("prompt", ""),
+                arguments.get("timeout"),
+            )
+        if name == "generate_3d_nvidia":
+            return generate_nvidia_trellis(
+                arguments.get("prompt", ""),
+                arguments.get("image_path"),
+                arguments.get("timeout"),
+            )
+        if name == "generate_3d_auto":
+            return generate_3d_auto(
+                arguments.get("prompt", ""),
+                arguments.get("image_path"),
+                arguments.get("timeout"),
+            )
         return f"Ferramenta desconhecida: {name}"
 
     def execute_huggingface(self, name, arguments):
@@ -190,6 +265,8 @@ def _require_audio_keys(stt_provider, tts_provider):
 
 def menu():
     from providers.groq_provider import available_models as groq_models
+    from providers.gemini_provider import available_models as gemini_models
+    from providers.tokenharbor_provider import available_models as tokenharbor_models
     from providers.mistral_provider import available_models as mistral_models
     from providers.nvidia_provider import available_models as nvidia_models
     from providers.openrouter_provider import available_models as openrouter_models
@@ -197,9 +274,10 @@ def menu():
 
     ui.banner()
     rows = [
-        {"label": "Gemini Live", "description": "voz nativa, tela e webcam em tempo real"},
+        {"label": "Gemini", "description": "API de texto, modelos multimodais, Live, voz e agentes"},
         {"label": "Groq", "description": "modelos rápidos com seleção de modelo"},
         {"label": "Mistral", "description": "modelos Mistral com seleção de modelo"},
+        {"label": "Token Harbor", "description": "modelos gratuitos atuais via API OpenAI-compatible"},
         {"label": "OpenRouter", "description": "acesso a diversos modelos"},
         {"label": "NVIDIA", "description": "modelos NVIDIA NIM"},
         {"label": "Ollama", "description": "modelos locais ou remotos"},
@@ -208,20 +286,29 @@ def menu():
     ]
     choice = _prompt_choice("Modo", [{"id": str(i + 1), **row} for i, row in enumerate(rows)])
 
-    base = {"choice": choice, "groq_model": None, "mistral_model": None, "openrouter_model": None, "nvidia_model": None, "ollama_model": None, "huggingface_model": None}
+    base = {"choice": choice, "gemini_model": None, "groq_model": None, "tokenharbor_model": None, "mistral_model": None, "openrouter_model": None, "nvidia_model": None, "ollama_model": None, "huggingface_model": None}
     if choice == "1":
-        return base
+        mode = _prompt_choice("Gemini", [
+            {"id": "api", "label": "Gemini API", "description": "chat, código e ferramentas"},
+            {"id": "live", "label": "Gemini Live", "description": "voz, tela e webcam em tempo real"},
+        ])
+        if mode == "live":
+            base["choice"] = "1-live"
+            return base
+        base["gemini_model"] = select_model("Gemini API", gemini_models(), os.getenv("GEMINI_MODEL")); return base
     if choice == "2":
         base["groq_model"] = select_model("Groq", groq_models(), os.getenv("GROQ_MODEL")); return base
     if choice == "3":
         base["mistral_model"] = select_model("Mistral", mistral_models(), os.getenv("MISTRAL_MODEL")); return base
     if choice == "4":
-        base["openrouter_model"] = select_model("OpenRouter", openrouter_models(), os.getenv("OPENROUTER_MODEL")); return base
+        base["tokenharbor_model"] = select_model("Token Harbor", tokenharbor_models(), os.getenv("TOKENHARBOR_MODEL")); return base
     if choice == "5":
-        base["nvidia_model"] = select_model("NVIDIA", nvidia_models(), os.getenv("NVIDIA_MODEL")); return base
+        base["openrouter_model"] = select_model("OpenRouter", openrouter_models(), os.getenv("OPENROUTER_MODEL")); return base
     if choice == "6":
-        base["ollama_model"] = select_model("Ollama", ollama_models(), os.getenv("OLLAMA_MODEL")); return base
+        base["nvidia_model"] = select_model("NVIDIA", nvidia_models(), os.getenv("NVIDIA_MODEL")); return base
     if choice == "7":
+        base["ollama_model"] = select_model("Ollama", ollama_models(), os.getenv("OLLAMA_MODEL")); return base
+    if choice == "8":
         base["huggingface_model"] = select_model("Hugging Face", hf_models("chat"), os.getenv("HF_MODEL")); return base
     return base
 
@@ -259,8 +346,11 @@ def run_text_provider(provider_name, agent, stt_provider, tts_provider, fish_voi
             if avatar and not cancel_event.is_set(): avatar.speaking()
             spoken = "".join(agent.ask_stream(text, cancel_event=cancel_event))
             if cancel_event.is_set(): return
-            display_text = tts._speech_text(spoken)
-            if display_text: ui.chat_response(display_text)
+            # O texto exibido deve preservar Markdown e quebras de linha.
+            # _speech_text() é específico do TTS: ele remove URLs, tags e
+            # formatação para a fala e também achata as linhas. Usá-lo aqui
+            # fazia respostas longas parecerem cortadas no painel do CMD.
+            if spoken: ui.chat_response(spoken)
             speech_thread = threading.Thread(target=tts.speak, args=(spoken,), kwargs={"cancel_event": cancel_event}, daemon=True)
             speech_thread.start()
             with response_lock: still_current = current_response_id == response_id
@@ -356,13 +446,15 @@ def run_gemini_live(screen, webcam, avatar):
         except Exception: pass
 
 
-def create_text_agent(router, choice, groq_model=None, mistral_model=None, openrouter_model=None, nvidia_model=None, ollama_model=None, huggingface_model=None):
+def create_text_agent(router, choice, gemini_model=None, groq_model=None, mistral_model=None, openrouter_model=None, nvidia_model=None, ollama_model=None, huggingface_model=None, tokenharbor_model=None):
+    if choice == "1": return router.gemini(gemini_model), f"Gemini API ({gemini_model})"
     if choice == "2": return router.groq(groq_model), f"Groq ({groq_model})"
     if choice == "3": return router.mistral(mistral_model), f"Mistral ({mistral_model})"
-    if choice == "4": return router.openrouter(openrouter_model), f"OpenRouter ({openrouter_model})"
-    if choice == "5": return router.nvidia(nvidia_model), f"NVIDIA ({nvidia_model})"
-    if choice == "6": return router.ollama(ollama_model), f"Ollama ({ollama_model})"
-    if choice == "7":
+    if choice == "4": return router.tokenharbor(tokenharbor_model), f"Token Harbor ({tokenharbor_model})"
+    if choice == "5": return router.openrouter(openrouter_model), f"OpenRouter ({openrouter_model})"
+    if choice == "6": return router.nvidia(nvidia_model), f"NVIDIA ({nvidia_model})"
+    if choice == "7": return router.ollama(ollama_model), f"Ollama ({ollama_model})"
+    if choice == "8":
         return router.huggingface(huggingface_model), f"Hugging Face ({huggingface_model})"
     return router.automatic(groq_model, openrouter_model, nvidia_model, mistral_model, huggingface_model), "Modo automático"
 
@@ -374,7 +466,7 @@ def run_text_mode(screen, webcam, avatar, selection):
     fish_voice_id = select_fish_voice() if tts_provider == "fish" else None
     executor = LocalToolExecutor(screen, webcam)
     router = ProviderRouter(executor.execute)
-    agent, label = create_text_agent(router, selection["choice"], selection["groq_model"], selection["mistral_model"], selection["openrouter_model"], selection["nvidia_model"], selection["ollama_model"], selection.get("huggingface_model"))
+    agent, label = create_text_agent(router, selection["choice"], selection.get("gemini_model"), selection["groq_model"], selection["mistral_model"], selection["openrouter_model"], selection["nvidia_model"], selection["ollama_model"], selection.get("huggingface_model"), selection.get("tokenharbor_model"))
     ui.status(f"STT: {stt_provider}  | TTS: {tts_provider}")
     run_text_provider(label, agent, stt_provider, tts_provider, fish_voice_id, avatar=avatar)
 
@@ -407,7 +499,7 @@ def run():
         selection = menu()
         selection["show_avatar"] = select_avatar_enabled()
         if selection["show_avatar"]: avatar = start_avatar()
-        if selection["choice"] == "1": run_gemini_live(screen, webcam, avatar)
+        if selection["choice"] == "1-live": run_gemini_live(screen, webcam, avatar)
         else: run_text_mode(screen, webcam, avatar, selection)
     except KeyboardInterrupt:
         ui.warn("Encerrando agente...")

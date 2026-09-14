@@ -8,6 +8,8 @@ para manter uma identidade visual consistente no terminal.
 from __future__ import annotations
 
 from contextlib import contextmanager
+import re
+import textwrap
 
 from rich import box
 from rich.align import Align
@@ -201,6 +203,34 @@ def chat_agent_prefix() -> None:
 
 
 def chat_response(text: str) -> None:
+    # Tags de emoção são instruções internas do Fish TTS, não texto da UI.
+    text = re.sub(
+        r"\[(?:happy|excited|calm|empathetic|curious|confident|sad|angry|surprised|laughing|whispering|serious|friendly|playful|neutral)\]",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    # Alguns terminais Windows não quebram corretamente uma linha única
+    # dentro de um renderizável Markdown. Fazemos a quebra antes do Rich,
+    # preservando blocos de código e listas.
+    width = max(40, console.width - 8)
+    wrapped_lines = []
+    in_code = False
+    for line in text.splitlines() or [""]:
+        if line.strip().startswith("```"):
+            in_code = not in_code
+            wrapped_lines.append(line)
+        elif in_code or not line.strip():
+            wrapped_lines.append(line)
+        else:
+            wrapped_lines.extend(textwrap.wrap(
+                line,
+                width=width,
+                break_long_words=False,
+                break_on_hyphens=False,
+                replace_whitespace=False,
+            ) or [""])
+    text = "\n".join(wrapped_lines)
     # Markdown deixa listas, títulos e blocos de código legíveis sem
     # quebrar a resposta em uma única linha no CMD.
     console.print(
@@ -209,6 +239,7 @@ def chat_response(text: str) -> None:
             border_style="brand",
             box=box.ROUNDED,
             padding=(1, 2),
+            width=console.width,
         )
     )
 
@@ -248,3 +279,183 @@ def prompt(message: str) -> str:
         return terminal_prompt(
             message,
         )
+
+
+# ---------------------------------------------------------------------------
+# Visualização de operações de código
+# ---------------------------------------------------------------------------
+
+def _glass_compact_path(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        from pathlib import Path
+        path = Path(value).expanduser()
+        try:
+            return f"~/{path.relative_to(Path.home())}"
+        except ValueError:
+            pass
+    except (TypeError, ValueError, OSError):
+        pass
+    return str(value)
+
+
+def _glass_lexer(path: str) -> str:
+    from pathlib import Path
+    suffix = Path(path).suffix.lower() if path else ""
+    return {
+        ".py": "python", ".js": "javascript", ".ts": "typescript",
+        ".tsx": "tsx", ".jsx": "jsx", ".html": "html", ".htm": "html",
+        ".css": "css", ".json": "json", ".xml": "xml", ".sql": "sql",
+        ".md": "markdown", ".yml": "yaml", ".yaml": "yaml",
+        ".ps1": "powershell", ".sh": "bash", ".bat": "batch",
+    }.get(suffix, "text")
+
+
+def _glass_preview(name: str, arguments: dict | None, result: object) -> tuple[str, str]:
+    """Seleciona uma única prévia útil, evitando despejar o mesmo conteúdo duas vezes."""
+    arguments = arguments or {}
+    path = str(arguments.get("path", ""))
+    preview = ""
+    if name == "write_file":
+        preview = str(arguments.get("content", ""))
+    elif name in {"write_file_chunk", "edit_file"}:
+        preview = str(arguments.get("content", "") or arguments.get("replace", ""))
+        if name == "edit_file" and arguments.get("find"):
+            preview = f"- {arguments['find']}\n+ {preview}"
+    elif name in {"read_file", "read_file_range", "inspect_project"}:
+        preview = str(result or "")
+        marker = "Conteúdo:\n\n"
+        if marker in preview:
+            preview = preview.split(marker, 1)[1]
+        elif "Linhas " in preview and "\n\n" in preview:
+            preview = preview.split("\n\n", 1)[1]
+    else:
+        preview = str(result or "")
+    preview = preview.strip()
+    if len(preview) > 1800:
+        preview = preview[:1800].rstrip() + "\n... previa reduzida"
+    return preview, path
+
+
+def chat_operation_header(objective: str) -> None:
+    short = " ".join(str(objective or "").split())
+    if len(short) > 100:
+        short = short[:97] + "..."
+    console.print(
+        Panel(
+            Text.assemble(
+                ("[+]  WORKSPACE / CODIGO\n", "brand"),
+                (short or "Operacao iniciada", "white"),
+            ),
+            title="[accent]visualizacao da operacao[/accent]",
+            subtitle="[muted]acoes, arquivos e previas aparecem aqui[/muted]",
+            border_style="brand",
+            box=box.ROUNDED,
+            padding=(0, 2),
+            width=console.width,
+        )
+    )
+
+
+def chat_tool(
+    name: str,
+    repeated: bool = False,
+    arguments: dict | None = None,
+    result: object = None,
+) -> None:
+    """Mostra uma operação como um cartão de vidro compacto."""
+    from rich.console import Group
+    from rich.syntax import Syntax
+
+    preview, path = _glass_preview(name, arguments, result)
+    result_text = str(result or "").strip()
+    failed = result_text.lower().startswith((
+        "erro", "error", "edição não aplicada", "ediÃ§Ã£o nÃ£o aplicada"
+    ))
+    status_label = "IGNORADA" if repeated else ("FALHOU" if failed else "CONCLUIDA")
+    status_style = "warn" if repeated else ("error" if failed else "ok")
+
+    table = Table.grid(expand=True, padding=(0, 1))
+    table.add_column(style="muted", width=12, no_wrap=True)
+    table.add_column(style="white")
+    table.add_row("acao", f"{name}()")
+    action_kind = {
+        "write_file": "CRIAR / ATUALIZAR",
+        "write_file_chunk": "ACRESCENTAR TRECHO",
+        "edit_file": "ALTERAR TRECHO",
+        "read_file": "LER CODIGO",
+        "read_file_range": "LER LINHAS",
+        "inspect_project": "INSPECIONAR",
+        "run_terminal": "EXECUTAR COMANDO",
+        "run_code_file": "EXECUTAR CODIGO",
+        "validate_file": "VALIDAR",
+    }.get(name)
+    if action_kind:
+        table.add_row("tipo", action_kind)
+    if path:
+        table.add_row("arquivo", _glass_compact_path(path))
+    if arguments and name == "run_terminal":
+        command = str(arguments.get("command", ""))
+        table.add_row("comando", command[:120] + ("..." if len(command) > 120 else ""))
+    table.add_row("status", f"[{status_style}]{status_label}[/{status_style}]")
+
+    body = [table]
+    if repeated:
+        body.append(Text("mesmos argumentos ja executados nesta solicitacao", style="muted"))
+    elif result_text:
+        first_line = next((line.strip() for line in result_text.splitlines() if line.strip()), "")
+        if first_line and first_line.lower() not in preview.lower():
+            body.append(Text(first_line[:220], style="muted"))
+    if preview and not repeated:
+        body.append(Syntax(preview, _glass_lexer(path), theme="monokai", line_numbers=True, word_wrap=True))
+
+    console.print(
+        Panel(
+            Group(*body),
+            title=f"[info][AI][/info]  [accent]{name}[/accent]  [{status_style}]{status_label}[/{status_style}]",
+            border_style="error" if failed else ("warn" if repeated else "brand"),
+            box=box.ROUNDED,
+            padding=(0, 1),
+            width=console.width,
+        )
+    )
+
+
+def chat_operation_summary(summary: str) -> None:
+    console.print(
+        Panel(
+            Text(summary, style="white"),
+            title="[brand][+] resumo da operacao[/brand]",
+            border_style="brand",
+            box=box.ROUNDED,
+            padding=(0, 2),
+            width=console.width,
+        )
+    )
+
+
+# Compatibilidade com o CMD legado do Windows: estes prefixos não dependem
+# de emojis nem de caracteres que cp1252 não consegue imprimir.
+def ok(message: str) -> None:
+    console.print(f"[ok][OK][/ok] {message}")
+
+
+def warn(message: str) -> None:
+    console.print(f"[warn][WARN][/warn] {message}")
+
+
+def error(message: str) -> None:
+    console.print(f"[error][ERROR][/error] {message}")
+
+
+def info(message: str) -> None:
+    console.print(f"[info][INFO][/info] {message}")
+
+
+def chat_notice(message: str) -> None:
+    console.print(f"\n[warn][NOTICE][/warn] {message}")
+
+
+def interrupted() -> None:
+    console.print("\n[warn][STOP] Interrompido.[/warn]")

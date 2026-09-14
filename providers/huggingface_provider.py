@@ -35,15 +35,15 @@ HF_EXTRA_TOOLS = [
         "type": "function",
         "function": {
             "name": "generate_3d",
-            "description": "Gera um modelo 3D visualizável a partir de uma imagem. Não altera nem substitui o avatar Live2D; é uma capacidade generativa independente do agente.",
+            "description": "Gera um modelo 3D a partir de um prompt ou de uma imagem de referência usando um Space Gradio da Hugging Face. Não altera o avatar Live2D.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "prompt": {"type": "string", "description": "Descrição do objeto desejado; usada como contexto da geração."},
-                    "image_path": {"type": "string", "description": "Caminho da imagem de referência. Obrigatório para image-to-3D."},
+                    "image_path": {"type": "string", "description": "Caminho opcional da imagem de referência."},
                     "model": {"type": "string", "description": "Modelo HF 3D; deixe vazio para usar HF_3D_MODEL."},
                 },
-                "required": ["prompt", "image_path"],
+                "required": ["prompt"],
             },
         },
     },

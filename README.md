@@ -218,6 +218,21 @@ A memória persistente permanece local e não deve ser enviada ao repositório.
 
 ---
 
+### Token Harbor
+
+Integra a API OpenAI-compatible do Token Harbor com as rotas gratuitas atuais.
+O modelo padrao e `deepseek-v4.1-flash:free`, com alternativas
+`deepseek-v4-flash:free` e `mimo-v2.5:free`. A lista pode mudar no catalogo
+do servico.
+
+```env
+TOKENHARBOR_API_KEY=sua_chave_tokenharbor
+TOKENHARBOR_MODEL=deepseek-v4.1-flash:free
+TOKENHARBOR_BASE_URL=https://tokenharbor.ai/v1
+```
+
+No modo Automatico, Token Harbor e priorizado quando uma chave estiver configurada.
+
 ## Ferramentas
 
 O sistema utiliza ferramentas estruturadas para permitir que o modelo execute ações específicas sem receber acesso irrestrito ao computador.
@@ -243,12 +258,33 @@ O sistema utiliza ferramentas estruturadas para permitir que o modelo execute a�
 
 ### Memória
 
-- `save_memory` para armazenar informações importantes;
-- `search_memory` para recuperar informações persistentes.
+- `save_memory` para armazenar informações importantes, com deduplicação;
+- `search_memory` para recuperar informações persistentes por relevância;
+- `list_memory`, `update_memory` e `delete_memory` para organizar a base com
+  confirmação explícita do usuário quando necessário;
+- expiração automática de fatos temporários e recuperação de JSON corrompido.
 
 ### Imagens
 
 - `generate_image` para gerar imagens utilizando a Hugging Face Inference API.
+
+### Desenvolvimento de software
+
+As ferramentas de desenvolvimento agora cobrem varias linguagens usando os
+runtimes instalados no computador:
+
+- `detect_runtimes` identifica Python, Node, Go, Rust, Java, .NET, Ruby, PHP e outros;
+- `run_code_file` executa scripts e arquivos compilaveis por extensao;
+- `run_terminal` executa testes, builds e comandos de desenvolvimento no workspace,
+  aceitando `input_text` para programas interativos;
+- `install_dependencies` detecta requirements.txt, pyproject.toml, package.json,
+  Cargo.toml, go.mod, Maven, Gradle e Composer;
+- `download_file` baixa assets HTTP/HTTPS para pastas permitidas, com limite de 100 MB.
+
+Comandos destrutivos, downloads via shell e referencias diretas a segredos sao
+bloqueados. Instalacoes de dependencias continuam sendo acao explicita.
+As execucoes retornam `Exit code` e `Status`; processos interativos devem
+receber entradas de teste em vez de serem iniciados sem stdin.
 
 As ferramentas possuem regras definidas no prompt do agente para reduzir comportamentos inesperados e impedir operações destrutivas arbitrárias.
 
@@ -299,6 +335,95 @@ Pictures/AgentePessoal/
 O modelo pode ser alterado pela variável `HF_IMAGE_MODEL` sem modificar o código do agente.
 
 ---
+
+## Geração 3D local com TripoSR
+
+O agente também pode gerar um modelo 3D localmente usando o TripoSR, sem consumir créditos de API. Esse backend funciona a partir de uma imagem de referência e requer uma instalação separada do repositório oficial.
+
+```env
+TRIPOSR_PATH=C:\\caminho\\para\\TripoSR
+TRIPOSR_PYTHON=C:\\caminho\\para\\TripoSR\\.venv\\Scripts\\python.exe
+TRIPOSR_DEVICE=cuda:0
+TRIPOSR_TIMEOUT=900
+```
+
+Depois de clonar e instalar o TripoSR conforme a documentação oficial, peça ao agente para usar a ferramenta local ou informe uma imagem de referência, por exemplo:
+
+```text
+Gere um modelo 3D local usando a imagem C:\\imagens\\foguete.png
+```
+
+O resultado GLB e o visualizador HTML são salvos em `Pictures/AgentePessoal/TripoSR/`.
+
+### Geração 3D hospedada: Hyper3D/Rodin e Trify3D
+
+Também é possível gerar modelos 3D sem clonar ou instalar outro projeto. O
+agente chama as APIs hospedadas, acompanha o processamento e salva o GLB e um
+visualizador HTML em `Pictures/AgentePessoal/Hosted3D/`.
+
+Configure no `.env` apenas o provedor que quiser usar:
+
+```env
+RODIN_API_KEY=...
+RODIN_TIER=Gen-2.5-Medium
+RODIN_QUALITY=medium
+RODIN_TIMEOUT=1200
+
+TRIFY3D_API_KEY=...
+TRIFY3D_MODE=quality
+TRIFY3D_STYLE=realistic
+TRIFY3D_TIMEOUT=1200
+```
+
+Exemplos de pedidos:
+
+```text
+Gere um modelo 3D de um foguete usando Rodin.
+Gere um modelo 3D de uma cadeira usando Trify3D.
+Gere um 3D usando Rodin a partir da imagem C:\imagens\objeto.png.
+```
+
+Rodin e Trify3D são serviços hospedados: exigem uma chave válida e podem
+consumir créditos do respectivo provedor. A integração trata polling, timeout,
+limite de requisições, erros de crédito e download do modelo. Para o Trify3D,
+a chave precisa ter permissão de escrita para iniciar uma geração.
+
+### Opção gratuita sem API key: three.ws
+
+Para testar texto→3D sem criar conta, use a ferramenta gratuita integrada
+`generate_3d_free`. Ela chama o endpoint público do three.ws, acompanha a fila
+e salva o GLB no mesmo diretório `Hosted3D`. A faixa gratuita gera um rascunho
+de um único objeto, somente em GLB, sem rigging e com limite por IP.
+
+```text
+Gere gratuitamente um 3D de um foguete usando a ferramenta sem API key.
+```
+
+Essa opção é indicada para protótipos; Rodin/Trify3D continuam disponíveis
+quando você tiver créditos ou chaves próprias.
+
+### NVIDIA TRELLIS
+
+Se você criou uma chave no NVIDIA Build, o agente também pode usar o endpoint
+oficial do TRELLIS. Ele aceita texto ou imagem e retorna um GLB. Configure a
+chave específica ou reutilize `NVIDIA_API_KEY`:
+
+```env
+NVIDIA_TRELLIS_API_KEY=...
+# ou NVIDIA_API_KEY=...
+NVIDIA_TRELLIS_TIMEOUT=900
+```
+
+Exemplos:
+
+```text
+Gere um 3D usando NVIDIA TRELLIS: foguete espacial vermelho.
+Gere um 3D usando NVIDIA TRELLIS a partir da imagem C:\imagens\objeto.png.
+```
+
+O arquivo é salvo em `Pictures/AgentePessoal/Hosted3D/`. O endpoint hospedado
+é síncrono e devolve o GLB em base64; a ferramenta decodifica o resultado e
+cria o visualizador HTML automaticamente.
 
 ## Estrutura do projeto
 

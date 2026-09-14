@@ -77,10 +77,93 @@ def _find_3d_file(value) -> Path | None:
             found = _find_3d_file(item)
             if found:
                 return found
+    path_value = getattr(value, "path", None)
+    if path_value:
+        return _find_3d_file(path_value)
     return None
 
 
+def _generate_hf_image_file(prompt: str) -> Path:
+    model = os.getenv("HF_IMAGE_MODEL", "black-forest-labs/FLUX.1-schnell")
+    provider = os.getenv("HF_IMAGE_PROVIDER", "auto").strip() or "auto"
+    client = InferenceClient(api_key=_token(), provider=provider)
+    image = client.text_to_image(prompt=prompt, model=model)
+    path = _stamp("3d", ".png")
+    image.save(path)
+    return path
+
+
 def generate_3d(prompt: str, model: str | None = None, image_path: str | None = None) -> str:
+    """Generate a mesh through the Hugging Face Gradio Space."""
+    try:
+        from gradio_client import Client, handle_file
+    except ImportError as exc:
+        raise RuntimeError(
+            "A gera\u00e7\u00e3o 3D precisa do pacote gradio_client."
+        ) from exc
+
+    model = model or os.getenv("HF_3D_MODEL", "tencent/Hunyuan3D-2")
+    space = os.getenv("HF_3D_SPACE", "tencent/Hunyuan3D-2")
+    token = _token()
+    client = Client(space, token=token)
+    caption = (prompt or "").strip() or None
+    image = handle_file(image_path) if image_path else None
+    endpoint = os.getenv("HF_3D_API_NAME", "/generation_all").strip() or "/generation_all"
+
+    def predict(caption_value, image_value, api_name):
+        return client.predict(
+            caption_value,
+            image_value,
+            50,
+            7.5,
+            1234,
+            256,
+            True,
+            api_name=api_name,
+        )
+
+    try:
+        result = predict(caption, image, endpoint)
+    except Exception as first_error:
+        try:
+            result = predict(caption, image, "/shape_generation")
+        except Exception as second_error:
+            if image_path or not caption:
+                raise RuntimeError(
+                    f"Falha no Space 3D ({space}): {second_error}"
+                ) from second_error
+            # Hosted revisions may disable text-to-3D. In that case, create a
+            # reference image with HF and use the same Space in image-to-3D.
+            reference = _generate_hf_image_file(caption)
+            try:
+                result = predict(None, handle_file(str(reference)), "/generation_all")
+            except Exception as third_error:
+                raise RuntimeError(
+                    f"Falha no Space 3D ({space}): {third_error}"
+                ) from third_error
+
+    source = _find_3d_file(result)
+    if not source:
+        raise RuntimeError(
+            "O Space 3D respondeu, mas n\u00e3o retornou uma malha GLB/GLTF/OBJ/STL/PLY."
+        )
+
+    target = _stamp("3d", source.suffix.lower() or ".glb")
+    target.write_bytes(source.read_bytes())
+    viewer = target.with_suffix(".html")
+    viewer.write_text(
+        "<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>Agente Pessoal - Modelo 3D</title>"
+        "<script type='module' src='https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js'></script>"
+        "<style>html,body{margin:0;height:100%;background:#101114}model-viewer{width:100%;height:100%}</style>"
+        "</head><body><model-viewer src='" + target.as_uri() + "' camera-controls auto-rotate shadow-intensity='1' exposure='1' environment-image='neutral'></model-viewer></body></html>",
+        encoding="utf-8",
+    )
+    return f"Modelo 3D gerado com {model}. Arquivo: {target}. Visualizador: {viewer}"
+
+
+def _legacy_generate_3d(prompt: str, model: str | None = None, image_path: str | None = None) -> str:
     """Gera um asset 3D e cria um pequeno viewer HTML local.
 
     O modelo continua separado do avatar Live2D. Hunyuan3D-2.0 é usado como

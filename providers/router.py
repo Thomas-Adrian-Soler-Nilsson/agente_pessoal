@@ -1,4 +1,5 @@
 import copy
+import os
 
 from ui import ui
 from .groq_provider import GroqAgent
@@ -7,6 +8,8 @@ from .nvidia_provider import NvidiaAgent, available_models as nvidia_models
 from .ollama_provider import OllamaAgent
 from .openrouter_provider import OpenRouterAgent, available_models as openrouter_models
 from .huggingface_provider import HuggingFaceAgent, available_models as huggingface_models
+from .tokenharbor_provider import TokenHarborAgent, available_models as tokenharbor_models
+from .gemini_provider import GeminiAgent, available_models as gemini_models
 
 
 class ProviderRouter:
@@ -15,6 +18,12 @@ class ProviderRouter:
 
     def groq(self, model=None):
         return GroqAgent(self.tool_executor, model=model)
+
+    def gemini(self, model=None):
+        return GeminiAgent(self.tool_executor, model=model)
+
+    def tokenharbor(self, model=None):
+        return TokenHarborAgent(self.tool_executor, model=model)
 
     def openrouter(self, model=None):
         return OpenRouterAgent(self.tool_executor, model=model)
@@ -38,6 +47,7 @@ class ProviderRouter:
         nvidia_model=None,
         mistral_model=None,
         huggingface_model=None,
+        tokenharbor_model=None,
     ):
         return AutomaticAgent(
             self.tool_executor,
@@ -46,6 +56,7 @@ class ProviderRouter:
             nvidia_model,
             mistral_model,
             huggingface_model,
+            tokenharbor_model,
         )
 
 
@@ -58,6 +69,7 @@ class AutomaticAgent:
         nvidia_model=None,
         mistral_model=None,
         huggingface_model=None,
+        tokenharbor_model=None,
     ):
         self.tool_executor = tool_executor
         self.groq_model = groq_model
@@ -65,6 +77,7 @@ class AutomaticAgent:
         self.nvidia_model = nvidia_model
         self.mistral_model = mistral_model
         self.huggingface_model = huggingface_model
+        self.tokenharbor_model = tokenharbor_model
         self.current = None
         self.messages = None
         self.personality = ""
@@ -91,13 +104,16 @@ class AutomaticAgent:
         if cancel_event is not None and cancel_event.is_set():
             return
 
-        providers = [
+        providers = []
+        if os.getenv("TOKENHARBOR_API_KEY", "").strip() or os.getenv("TOKENHARBOR_KEY", "").strip():
+            providers.append((TokenHarborAgent, self.tokenharbor_model, "Token Harbor"))
+        providers.extend([
             (GroqAgent, self.groq_model, "Groq"),
             (MistralAgent, self.mistral_model, "Mistral"),
             (OpenRouterAgent, self.openrouter_model, "OpenRouter"),
             (NvidiaAgent, self.nvidia_model, "NVIDIA"),
             (HuggingFaceAgent, self.huggingface_model, "Hugging Face"),
-        ]
+        ])
 
         # Cada provider recebe primeiro o modelo configurado; depois,
         # quando aplicável, o catálogo alternativo daquele provider.
@@ -106,6 +122,7 @@ class AutomaticAgent:
             "OpenRouter": openrouter_models,
             "NVIDIA": nvidia_models,
             "Hugging Face": huggingface_models,
+            "Token Harbor": tokenharbor_models,
         }
 
         for provider_class, selected_model, label in providers:

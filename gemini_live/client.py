@@ -18,9 +18,7 @@ from tools.files import FileTools
 load_dotenv()
 
 
-MODEL = (
-    "gemini-3.1-flash-live-preview"
-)
+MODEL = os.getenv("GEMINI_LIVE_MODEL", "gemini-3.1-flash-live-preview")
 
 
 SYSTEM_INSTRUCTION = """

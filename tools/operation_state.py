@@ -13,6 +13,17 @@ class OperationState:
     validation_status: str = "pending"
     execution_status: str = "pending"
 
+    def reset(self, objective: str = ""):
+        """Começa uma operação nova sem carregar dados da solicitação anterior."""
+        self.objective = str(objective or "")
+        self.files_read.clear()
+        self.files_modified.clear()
+        self.tools_used.clear()
+        self.last_successful_operation = ""
+        self.last_error = ""
+        self.validation_status = "pending"
+        self.execution_status = "pending"
+
     def record_tool(self, name: str):
         self.tools_used.append(name)
         self.tools_used = self.tools_used[-30:]
@@ -32,12 +43,15 @@ class OperationState:
         self.validation_status = "pending"
 
     def summary(self) -> str:
+        read = "\n".join(f"  - {path}" for path in sorted(self.files_read)) or "  - nenhum"
+        modified = "\n".join(f"  - {path}" for path in sorted(self.files_modified)) or "  - nenhum"
         return (
-            f"Objetivo: {self.objective or 'não definido'}\n"
-            f"Arquivos lidos: {len(self.files_read)}\n"
-            f"Arquivos modificados: {len(self.files_modified)}\n"
-            f"Última operação: {self.last_successful_operation or 'nenhuma'}\n"
-            f"Último erro: {self.last_error or 'nenhum'}\n"
-            f"Validação: {self.validation_status}\n"
-            f"Execução: {self.execution_status}"
+            f"Objetivo: {self.objective or 'nao definido'}\n"
+            f"Arquivos lidos ({len(self.files_read)}):\n{read}\n"
+            f"Arquivos modificados ({len(self.files_modified)}):\n{modified}\n"
+            f"Ferramentas: {', '.join(self.tools_used[-12:]) or 'nenhuma'}\n"
+            f"Ultima operacao: {self.last_successful_operation or 'nenhuma'}\n"
+            f"Ultimo erro: {self.last_error or 'nenhum'}\n"
+            f"Validacao: {self.validation_status}\n"
+            f"Execucao: {self.execution_status}"
         )

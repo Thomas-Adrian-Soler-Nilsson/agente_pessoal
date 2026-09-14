@@ -1,3 +1,4 @@
+import copy
 import json
 import time
 import concurrent.futures
@@ -25,6 +26,17 @@ Como suas respostas serão faladas, seja conciso e evite listas gigantes.
 
 REGRAS DE FERRAMENTAS:
 
+DESENVOLVIMENTO MULTILINGUAGEM:
+- Use detect_runtimes antes de escolher um runtime quando a linguagem nao estiver clara.
+- Use run_code_file para executar um arquivo; ele suporta varios runtimes instalados.
+- Prefira run_code_file a execute_file para codigo; execute_file fica para compatibilidade com HTML legado.
+- Use run_terminal para testes, builds, git e comandos de desenvolvimento no workspace.
+- Use open_terminal somente quando Thomas pedir explicitamente uma janela visível do CMD.
+- Use install_dependencies somente quando Thomas pedir para instalar dependencias.
+- Use download_file para baixar arquivos HTTP/HTTPS; nao use curl/wget no terminal.
+- Depois de editar codigo, valide e execute o teste adequado, analisando codigo de saida, stdout e stderr.
+- Nao tente acessar, imprimir ou copiar chaves, tokens, senhas ou arquivos .env.
+
 - Use ferramentas somente quando elas forem realmente necessárias.
 - Não repita a mesma chamada de ferramenta com os mesmos argumentos.
 - Se uma ferramenta já retornou informação suficiente para responder, pare de usar ferramentas.
@@ -34,6 +46,11 @@ REGRAS DE FERRAMENTAS:
 - Não leia novamente um arquivo apenas para confirmar o conteúdo.
 - Não fique em um ciclo de ferramentas tentando obter exatamente a mesma informação.
 - Depois de obter dados suficientes, produza a resposta final.
+- Para tarefas de criação de código, seja objetivo: faça o menor número de
+  chamadas necessárias. Em geral: escreva o arquivo, execute uma vez e só
+  corrija se o resultado realmente indicar erro.
+- Não use marcadores de emoção como [calm] ou [happy] em chamadas de
+  ferramenta nem dentro de código. Eles são reservados à síntese de voz.
 - Quando precisar de várias informações independentes entre si (por
   exemplo, ler 2-3 arquivos diferentes, ou fazer buscas separadas),
   peça todas as chamadas de ferramenta necessárias na mesma resposta
@@ -87,6 +104,17 @@ general
 Use search_memory quando uma pergunta depender de algo que pode ter sido
 lembrado anteriormente.
 
+REGRAS PRÁTICAS DA MEMÓRIA:
+- Não salve mensagens inteiras, arquivos, código ou fatos que só valem para a
+  solicitação atual.
+- Antes de salvar uma preferência, objetivo ou fato recorrente, procure uma
+  memória relacionada para evitar duplicatas.
+- Se a informação já existir, use update_memory quando Thomas estiver
+  corrigindo ou renovando o dado; não salve outra cópia.
+- Use list_memory quando Thomas pedir para ver ou organizar suas memórias.
+- Use delete_memory somente após um pedido explícito para esquecer/remover.
+- Não invente memory_id: obtenha-o com search_memory ou list_memory.
+
 A memória temporal NÃO substitui a memória da conversa atual.
 Use a conversa atual para contexto imediato e a memória temporal para
 informações persistentes.
@@ -112,21 +140,30 @@ Quando Thomas pedir para criar código e salvar em arquivo:
 
 1. Gere o código.
 2. Escolha um caminho apropriado.
-3. Use write_file somente para arquivos pequenos. Para HTML, CSS, JS ou
-    Python grandes, use write_file_chunk em blocos curtos (no máximo
-    ~500 caracteres por chamada) ou edit_file. Blocos maiores arriscam
-    cortar a própria chamada de ferramenta no meio do conteúdo.
+  3. Prefira write_file para arquivos pequenos ou médios, pois ele grava de
+     forma atômica e evita várias chamadas duplicadas. Use edit_file para uma
+     alteração localizada. Use write_file_chunk apenas quando o conteúdo for
+     realmente grande ou quando uma chamada única for cortada pelo provedor;
+     não fragmente um arquivo desnecessariamente em dezenas de chamadas.
 4. Não peça para Thomas copiar e colar manualmente.
 5. Confirme o caminho retornado pela ferramenta.
 
 Quando Thomas pedir para executar, testar ou rodar um arquivo:
 
 1. Verifique qual arquivo deve ser executado.
-2. Use execute_file.
+2. Para Python, JavaScript, TypeScript e outros scripts, prefira run_code_file.
+   Use execute_file principalmente para abrir HTML no navegador.
 3. Analise STDOUT, STDERR e código de saída.
 4. Se houver erro, explique o erro.
 5. Quando possível, corrija o arquivo usando edit_file ou write_file_chunk.
 6. Execute novamente para validar a correção.
+
+Para programas interativos que usam input(), nunca execute o processo sem dados.
+Use input_text com entradas de teste completas ou passe argumentos de linha de
+comando. Se um processo exceder o timeout, nao repita o mesmo comando: analise
+se ele ficou esperando stdin, corrija a chamada e tente uma unica vez.
+Depois de uma execucao com Exit code diferente de 0, nao repita a mesma chamada
+sem alterar o comando, os argumentos ou o arquivo responsavel pelo erro.
 
 Depois de write_file, write_file_chunk ou edit_file, confirme o resultado
 com get_file_info ou uma leitura objetiva antes de declarar concluído.
@@ -145,6 +182,14 @@ Nunca diga para Thomas criar manualmente um arquivo que você consegue criar usa
 Use web_search como primeira opção sempre que Thomas pedir para
 pesquisar, procurar ou ler conteúdo da internet. É rápida, não depende
 de navegador instalado e não trava a sessão de voz.
+CHECKLIST OBRIGATORIO DE CODIGO:
+- Nao diga que algo foi executado apenas porque foi escrito.
+- Se Thomas pedir para rodar, faca pelo menos uma chamada de execucao e leia o resultado.
+- Se o resultado tiver Status: failure ou Status: timeout, corrija a causa antes de responder.
+- Nao faca tres tentativas equivalentes: altere o comando, forneca stdin ou corrija o arquivo.
+- Para uma calculadora ou script interativo, prefira argumentos de teste ou input_text e
+  confirme um resultado deterministico, como `Resultado: 8`.
+
 Use browser_navigate apenas quando web_search falhar,
 ou quando o site exigir interação real.
 
@@ -159,6 +204,24 @@ repetir exatamente a mesma consulta.
 
 Use generate_image quando Thomas pedir para criar, gerar ou desenhar uma
 imagem. Escreva um prompt descritivo e detalhado.
+
+Para modelos 3D, use generate_3d_rodin ou generate_3d_trify quando houver
+uma chave do respectivo provedor configurada. Essas ferramentas aceitam um
+prompt ou image_path e fazem o polling até o arquivo GLB ficar disponível.
+Quando Thomas quiser uma opção gratuita sem chave, use generate_3d_free.
+Ela gera um rascunho GLB a partir de um único prompt.
+Quando houver NVIDIA_API_KEY ou NVIDIA_TRELLIS_API_KEY, use
+generate_3d_nvidia para chamar o NVIDIA TRELLIS; ele aceita texto ou imagem
+e retorna um GLB diretamente.
+Use generate_3d_local somente quando TRIPOSR_PATH estiver configurado.
+
+REGRA 3D: para um pedido comum de gerar um modelo 3D, use generate_3d_auto.
+Ela prioriza NVIDIA TRELLIS quando houver chave configurada e usa three.ws
+como fallback gratuito. Use
+generate_3d_free somente quando Thomas pedir explicitamente a opcao sem chave.
+Se uma ferramenta 3D retornar erro de indisponibilidade, pare de tentar outras
+ferramentas 3D e informe o erro ao Thomas; nao pesquise na web para substituir
+uma falha de geraÃ§ao.
 
 Considere sempre o resultado da ferramenta como a fonte da verdade.
 Nunca invente nomes, tipos ou conteúdos de arquivos.
@@ -177,7 +240,7 @@ read_file ou read_file_range depois se faltar um trecho específico.
 # leituras redundantes já esgotava o orçamento antes de qualquer edição
 # acontecer, e o modelo chegava na rodada final ainda querendo usar
 # ferramentas — o que causava a falha "resumo final falhou".
-MAX_TOOL_ROUNDS = 10
+MAX_TOOL_ROUNDS = 12
 
 
 class CancellationRequested(Exception):
@@ -200,6 +263,7 @@ PARALLEL_SAFE_TOOLS = {
     "deep_search",
     "code_search",
     "search_memory",
+    "list_memory",
 }
 
 
@@ -437,10 +501,10 @@ def build_tools():
         (
             "execute_file",
             (
-                "Executa um arquivo usando um runtime permitido. "
-                "Use depois de criar ou modificar um programa quando "
-                "Thomas pedir para executar, testar ou rodar o arquivo. "
-                "Python (.py), JavaScript (.js) e HTML (.html/.htm) "
+                "Ferramenta legada para abrir HTML no navegador. "
+                "Para Python, JavaScript, TypeScript e qualquer codigo executavel, "
+                "use run_code_file; nao use execute_file para scripts. "
+                "Use execute_file somente em arquivos HTML (.html/.htm). "
                 "são suportados diretamente."
             ),
             {
@@ -458,6 +522,84 @@ def build_tools():
             "Valida sintaxe de Python/JavaScript ou estrutura básica de HTML antes da execução.",
             {"path": {"type": "string"}},
             ["path"],
+        ),
+        (
+            "run_terminal",
+            (
+                "Executa um comando de terminal no diretorio informado, com timeout e saida limitada. "
+                "Use para testes, builds e comandos de desenvolvimento. Comandos destrutivos, downloads "
+                "via shell e acesso a segredos sao bloqueados; use as ferramentas dedicadas. "
+                "Para processos interativos, envie input_text ou o processo pode aguardar ate o timeout."
+            ),
+            {
+                "command": {"type": "string", "description": "Comando de terminal a executar."},
+                "cwd": {"type": "string", "description": "Diretorio de trabalho dentro das pastas permitidas."},
+                "timeout": {"type": "integer", "description": "Limite em segundos; padrao 120."},
+                "input_text": {"type": "string", "description": "Texto opcional enviado ao stdin do processo; use para programas interativos."},
+            },
+            ["command"],
+        ),
+        (
+            "open_terminal",
+            (
+                "Abre um CMD visível para Thomas acompanhar um comando. Use somente quando ele pedir "
+                "explicitamente para abrir o terminal, executar visivelmente ou acompanhar a execução."
+            ),
+            {
+                "command": {"type": "string", "description": "Comando a executar no CMD visível."},
+                "cwd": {"type": "string", "description": "Diretório de trabalho dentro das pastas permitidas."},
+            },
+            ["command"],
+        ),
+        (
+            "detect_runtimes",
+            "Detecta linguagens, compiladores, runtimes e gerenciadores de pacotes disponiveis no PATH.",
+            {},
+            [],
+        ),
+        (
+            "run_code_file",
+            (
+                "Executa um arquivo de codigo usando o runtime correspondente. Suporta Python, JavaScript, TypeScript, "
+                "Go, Rust, C, C++, Java, Kotlin, Ruby, PHP, Perl, Lua, R, Swift, Dart, Elixir, PowerShell, Bash e batch "
+                "quando os compiladores/runtimes estiverem instalados."
+            ),
+            {
+                "path": {"type": "string", "description": "Arquivo de codigo a executar."},
+                "arguments": {"type": "string", "description": "Argumentos opcionais do programa."},
+                "timeout": {"type": "integer", "description": "Limite em segundos; padrao 120."},
+                "input_text": {"type": "string", "description": "Texto opcional enviado ao stdin; use para scripts que pedem input()."},
+            },
+            ["path"],
+        ),
+        (
+            "install_dependencies",
+            (
+                "Instala dependencias de um projeto ou pacotes explicitos. Detecta requirements.txt, pyproject.toml, "
+                "package.json, Cargo.toml, go.mod, composer.json, Maven e Gradle. So use quando Thomas pedir instalacao."
+            ),
+            {
+                "path": {"type": "string", "description": "Pasta do projeto; padrao workspace."},
+                "manager": {"type": "string", "description": "auto, pip, npm, pnpm, yarn, cargo, go, dotnet, gem, composer, maven ou gradle."},
+                "packages": {"type": "string", "description": "Pacotes separados por espaco; opcional com manager=auto."},
+                "dev": {"type": "boolean", "description": "Instala como dependencia de desenvolvimento quando suportado."},
+                "timeout": {"type": "integer", "description": "Limite em segundos; padrao 900."},
+            },
+            [],
+        ),
+        (
+            "download_file",
+            (
+                "Baixa um arquivo HTTP/HTTPS para uma pasta permitida, com limite de 100 MB. "
+                "Use para assets e arquivos de projeto; nao exponha tokens na URL."
+            ),
+            {
+                "url": {"type": "string", "description": "URL HTTP ou HTTPS."},
+                "path": {"type": "string", "description": "Caminho de destino dentro das pastas permitidas."},
+                "overwrite": {"type": "boolean", "description": "Permite substituir um arquivo existente."},
+                "timeout": {"type": "integer", "description": "Limite em segundos; padrao 120."},
+            },
+            ["url", "path"],
         ),
         (
             "get_file_info",
@@ -496,6 +638,131 @@ def build_tools():
             ["prompt"],
         ),
         (
+            "generate_3d_local",
+            (
+                "Gera um modelo 3D localmente usando TripoSR, sem consumir "
+                "créditos de API. Requer uma imagem de referência e "
+                "TRIPOSR_PATH configurado."
+            ),
+            {
+                "image_path": {
+                    "type": "string",
+                    "description": "Caminho de uma imagem PNG, JPG ou WEBP do objeto.",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Tempo máximo em segundos; padrão 900.",
+                },
+            },
+            ["image_path"],
+        ),
+        (
+            "generate_3d_rodin",
+            (
+                "Gera um modelo 3D hospedado pela Hyper3D/Rodin, sem instalar "
+                "um modelo local. Aceita prompt ou image_path. Requer "
+                "RODIN_API_KEY e pode consumir créditos do provedor."
+            ),
+            {
+                "prompt": {
+                    "type": "string",
+                    "description": "Descrição textual do objeto; opcional se image_path for informado.",
+                },
+                "image_path": {
+                    "type": "string",
+                    "description": "Caminho opcional de uma imagem PNG, JPG ou WEBP do objeto.",
+                },
+            },
+            [],
+        ),
+        (
+            "generate_3d_trify",
+            (
+                "Gera um modelo 3D hospedado pela Trify3D, sem instalar um "
+                "modelo local. Aceita prompt ou image_path. Requer "
+                "TRIFY3D_API_KEY com permissão de escrita e pode consumir "
+                "créditos do provedor."
+            ),
+            {
+                "prompt": {
+                    "type": "string",
+                    "description": "Descrição textual do objeto; opcional se image_path for informado.",
+                },
+                "image_path": {
+                    "type": "string",
+                    "description": "Caminho opcional de uma imagem PNG, JPG ou WEBP do objeto.",
+                },
+            },
+            [],
+        ),
+        (
+            "generate_3d_free",
+            (
+                "Gera gratuitamente um rascunho 3D GLB via three.ws, sem API "
+                "key, conta ou instalação local. Aceita somente um prompt de "
+                "um único objeto; a qualidade é de protótipo e há limite por IP."
+            ),
+            {
+                "prompt": {
+                    "type": "string",
+                    "description": "Descrição de um único objeto, entre 3 e 1000 caracteres.",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Tempo máximo em segundos; padrão 600.",
+                },
+            },
+            ["prompt"],
+        ),
+        (
+            "generate_3d_nvidia",
+            (
+                "Gera um modelo 3D GLB com o NVIDIA TRELLIS hospedado. Aceita "
+                "prompt de até 77 caracteres ou image_path. Requer "
+                "NVIDIA_TRELLIS_API_KEY ou NVIDIA_API_KEY; a API pode ter "
+                "limites de uso do plano de desenvolvimento."
+            ),
+            {
+                "prompt": {
+                    "type": "string",
+                    "description": "Descrição curta do objeto, até 77 caracteres; opcional se image_path for informado.",
+                },
+                "image_path": {
+                    "type": "string",
+                    "description": "Caminho opcional de imagem PNG, JPG ou WEBP do objeto.",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Tempo máximo em segundos; padrão 900.",
+                },
+            },
+            [],
+        ),
+        (
+            "generate_3d_auto",
+            (
+                "Ferramenta PRINCIPAL para qualquer pedido comum de geraÃ§Ã£o 3D. "
+                "Prioriza NVIDIA TRELLIS quando houver chave configurada e usa "
+                "three.ws gratuito como fallback para prompts "
+                "de texto. Aceita prompt ou imagem."
+            ),
+            {
+                "prompt": {
+                    "type": "string",
+                    "description": "DescriÃ§Ã£o do objeto; para NVIDIA TRELLIS, prefira atÃ© 77 caracteres.",
+                },
+                "image_path": {
+                    "type": "string",
+                    "description": "Caminho opcional da imagem de referÃªncia.",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Tempo mÃ¡ximo em segundos; padrÃ£o definido pelo backend.",
+                },
+            },
+            [],
+        ),
+        (
             "save_memory",
             (
                 "Salva uma informação importante sobre Thomas "
@@ -523,6 +790,10 @@ def build_tools():
                     "minimum": 0,
                     "maximum": 1,
                 },
+                "expires_at": {
+                    "type": "string",
+                    "description": "Data ISO opcional para fatos temporários.",
+                },
             },
             ["content", "category", "importance"],
         ),
@@ -544,6 +815,33 @@ def build_tools():
                 },
             },
             ["query"],
+        ),
+        (
+            "list_memory",
+            "Lista memórias persistentes, opcionalmente por categoria. Use quando Thomas pedir para consultar ou organizar a memória.",
+            {
+                "category": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+            },
+            [],
+        ),
+        (
+            "update_memory",
+            "Atualiza uma memória existente. Use somente para corrigir ou renovar uma informação identificada pelo ID.",
+            {
+                "memory_id": {"type": "string"},
+                "content": {"type": "string"},
+                "category": {"type": "string"},
+                "importance": {"type": "number", "minimum": 0, "maximum": 1},
+                "expires_at": {"type": "string"},
+            },
+            ["memory_id"],
+        ),
+        (
+            "delete_memory",
+            "Remove uma memória persistente. Use somente quando Thomas pedir explicitamente para esquecer ou apagar uma informação.",
+            {"memory_id": {"type": "string"}},
+            ["memory_id"],
         ),
     ]
 
@@ -582,6 +880,7 @@ class CompatibleAgent:
         self.temporal_memory = TemporalMemory()
         self.operation_state = OperationState()
         self._inspected_roots = set()
+        self._operation_view_open = False
 
         self.messages = (
             messages
@@ -617,18 +916,26 @@ class CompatibleAgent:
     # CONTEXTO
     # ============================================================
 
-    def _shrink_context(self, max_chars: int = 2500):
-        for message in self.messages:
+    def _shrink_context(self, max_chars: int = 8000):
+        """Cria um payload compacto sem destruir o histórico local completo."""
+        compacted = copy.deepcopy(self.messages)
+        for message in compacted:
+            # Só resultados de ferramentas podem ser compactados. O histórico
+            # original, incluindo mensagens do usuário e respostas do agente,
+            # permanece intacto em self.messages para a próxima rodada.
+            if message.get("role") != "tool":
+                continue
             content = message.get("content")
-
-            if (
-                isinstance(content, str)
-                and len(content) > max_chars
-            ):
-                message["content"] = (
-                    content[:max_chars]
-                    + "\n\n[TRUNCADO PARA CABER NO LIMITE DO MODELO]"
-                )
+            if not isinstance(content, str) or len(content) <= max_chars:
+                continue
+            half = max_chars // 2
+            message["content"] = (
+                content[:half]
+                + "\n\n[RESULTADO COMPACTADO SÓ PARA ESTA TENTATIVA; "
+                "O HISTÓRICO LOCAL COMPLETO FOI PRESERVADO]\n\n"
+                + content[-half:]
+            )
+        return compacted
 
     def _is_too_large(self, error) -> bool:
         """
@@ -707,18 +1014,48 @@ class CompatibleAgent:
 
         return content.strip()
 
+    @staticmethod
+    def _message_text(message) -> str:
+        """Extrai texto sem quebrar em providers que retornam blocos/listas."""
+        content = getattr(message, "content", None)
+        if isinstance(content, list):
+            parts = []
+            for part in content:
+                if isinstance(part, str):
+                    parts.append(part)
+                elif isinstance(part, dict) and part.get("text"):
+                    parts.append(str(part["text"]))
+                elif getattr(part, "text", None):
+                    parts.append(str(part.text))
+            content = "\n".join(parts)
+        return str(content or "")
+
     # ============================================================
     # COMPLETION
     # ============================================================
 
     def _completion(self, cancel_event=None, **kwargs):
+        request_kwargs = dict(kwargs)
         for attempt in range(2):
             if cancel_event is not None and cancel_event.is_set():
                 raise CancellationRequested()
 
             try:
+                # OpenAI-compatible providers use the newer
+                # ``max_completion_tokens`` name. Hugging Face's
+                # InferenceClient still expects ``max_tokens``.
+                client_module = type(self.client).__module__
+                if (
+                    "huggingface_hub" in client_module
+                    and "max_completion_tokens" in request_kwargs
+                    and "max_tokens" not in request_kwargs
+                ):
+                    request_kwargs["max_tokens"] = request_kwargs.pop("max_completion_tokens")
+                if "huggingface_hub" in client_module:
+                    request_kwargs.pop("include_reasoning", None)
+
                 response = self.client.chat.completions.create(
-                    **kwargs
+                    **request_kwargs
                 )
 
                 if cancel_event is not None and cancel_event.is_set():
@@ -737,9 +1074,7 @@ class CompatibleAgent:
                         "Reduzindo o contexto e tentando novamente..."
                     )
 
-                    self._shrink_context()
-
-                    kwargs["messages"] = self.messages
+                    request_kwargs["messages"] = self._shrink_context()
 
                     continue
 
@@ -757,14 +1092,14 @@ class CompatibleAgent:
 
                 ui.warn(
                     "Limite temporário atingido. "
-                    "Tentando novamente em 5 segundos..."
+                    "Tentando novamente em 2 segundos..."
                 )
 
                 if cancel_event is not None:
-                    if cancel_event.wait(5):
+                    if cancel_event.wait(2):
                         raise CancellationRequested()
                 else:
-                    time.sleep(5)
+                    time.sleep(2)
 
     # ============================================================
     # MEMÓRIA
@@ -793,6 +1128,7 @@ class CompatibleAgent:
             "importance",
             0.5,
         )
+        expires_at = arguments.get("expires_at")
 
         if not content:
             return (
@@ -822,10 +1158,7 @@ class CompatibleAgent:
             content=content,
             category=category,
             importance=importance,
-        )
-
-        ui.chat_tool(
-            f"memória salva [{memory['category']}]"
+            expires_at=expires_at,
         )
 
         return (
@@ -877,18 +1210,10 @@ class CompatibleAgent:
         )
 
         if not memories:
-            ui.chat_tool(
-                f"memória: nenhum resultado para '{query}'"
-            )
-
             return (
                 "Nenhuma memória relevante foi encontrada "
                 f"para: {query}"
             )
-
-        ui.chat_tool(
-            f"memória: {len(memories)} resultado(s)"
-        )
 
         result = []
 
@@ -916,15 +1241,73 @@ class CompatibleAgent:
             ensure_ascii=False,
         )
 
+    def _list_memory(self, arguments: dict) -> str:
+        category = str(arguments.get("category", "")).strip() or None
+        try:
+            limit = int(arguments.get("limit", 20))
+        except (TypeError, ValueError):
+            limit = 20
+        memories = self.temporal_memory.list_memories(category=category, limit=limit)
+        return json.dumps(memories, ensure_ascii=False)
+
+    def _update_memory(self, arguments: dict) -> str:
+        memory_id = str(arguments.get("memory_id", "")).strip()
+        if not memory_id:
+            return "Não foi possível atualizar a memória: informe memory_id."
+        fields = {
+            key: arguments[key]
+            for key in ("content", "category", "importance", "expires_at")
+            if key in arguments
+        }
+        if not fields:
+            return "Não foi possível atualizar a memória: nenhum campo foi informado."
+        try:
+            memory = self.temporal_memory.update(memory_id, **fields)
+        except (TypeError, ValueError) as error:
+            return f"Erro ao atualizar memória: {error}"
+        if memory is None:
+            return f"Memória não encontrada: {memory_id}"
+        return "Memória atualizada com sucesso: " + json.dumps(memory, ensure_ascii=False)
+
+    def _delete_memory(self, arguments: dict) -> str:
+        memory_id = str(arguments.get("memory_id", "")).strip()
+        if not memory_id:
+            return "Não foi possível remover a memória: informe memory_id."
+        if not self.temporal_memory.delete(memory_id):
+            return f"Memória não encontrada: {memory_id}"
+        return f"Memória removida com sucesso: {memory_id}"
+
     # ============================================================
     # TOOL CALLS
     # ============================================================
+
+    @staticmethod
+    def _canonical_tool_arguments(arguments: dict, tool_name: str = "") -> dict:
+        """Normaliza caminhos e comandos para detectar repetições reais."""
+        normalized = dict(arguments or {})
+        for key in ("path", "cwd"):
+            value = normalized.get(key)
+            if isinstance(value, str) and value.strip():
+                try:
+                    normalized[key] = str(Path(value).expanduser().resolve()).lower()
+                except (OSError, RuntimeError, TypeError, ValueError):
+                    normalized[key] = value.strip().lower()
+        if isinstance(normalized.get("command"), str):
+            normalized["command"] = " ".join(normalized["command"].split())
+        if tool_name == "edit_file":
+            normalized.setdefault("expected_replacements", 1)
+        if tool_name in {"run_terminal", "run_code_file"}:
+            normalized.setdefault("timeout", 120)
+            normalized.setdefault("input_text", None)
+        return normalized
 
     def _tool_call_key(self, call) -> str:
         try:
             arguments = parse_tool_arguments(
                 call.function.arguments or "{}"
             )
+
+            arguments = self._canonical_tool_arguments(arguments, call.function.name)
 
             normalized_arguments = json.dumps(
                 arguments,
@@ -971,6 +1354,15 @@ class CompatibleAgent:
             elif tool_name == "search_memory":
                 result = self._search_memory(arguments)
 
+            elif tool_name == "list_memory":
+                result = self._list_memory(arguments)
+
+            elif tool_name == "update_memory":
+                result = self._update_memory(arguments)
+
+            elif tool_name == "delete_memory":
+                result = self._delete_memory(arguments)
+
             else:
                 result = self.tool_executor(
                     tool_name,
@@ -991,10 +1383,31 @@ class CompatibleAgent:
                 self.operation_state.record_read(arguments.get("path", ""))
             elif tool_name == "validate_file":
                 self.operation_state.validation_status = "passed" if "sucesso" in str(result).lower() else "failed"
-            elif tool_name == "execute_file":
-                self.operation_state.execution_status = "passed" if "código de saída: 0" in str(result).lower() else "failed"
+            elif tool_name in {"execute_file", "run_code_file", "run_terminal"}:
+                result_text = str(result).lower()
+                success_markers = (
+                    "código de saída: 0",
+                    "codigo de saida: 0",
+                    "exit code: 0",
+                    "process exited with code 0",
+                )
+                self.operation_state.execution_status = (
+                    "passed" if any(marker in result_text for marker in success_markers) else "failed"
+                )
 
-            self.operation_state.record_success(tool_name)
+            result_text = str(result).strip().lower()
+            failure_prefixes = (
+                "erro",
+                "error",
+                "edição não aplicada",
+                "ediÃ§Ã£o nÃ£o aplicada",
+                "operação bloqueada",
+                "operaÃ§Ã£o bloqueada",
+            )
+            if result_text.startswith(failure_prefixes):
+                self.operation_state.record_error(str(result))
+            else:
+                self.operation_state.record_success(tool_name)
 
             return result
 
@@ -1046,6 +1459,8 @@ class CompatibleAgent:
         # ============================================================
 
         results_by_id = {}
+        arguments_by_id = {}
+        repeated_ids = set()
         pending = []
 
         for call in tool_calls:
@@ -1058,15 +1473,18 @@ class CompatibleAgent:
 
             if tool_key in executed_tool_calls:
 
+                repeated_ids.add(call.id)
+                try:
+                    arguments_by_id[call.id] = parse_tool_arguments(
+                        call.function.arguments or "{}"
+                    )
+                except ToolArgumentsError:
+                    arguments_by_id[call.id] = {}
+
                 results_by_id[call.id] = tool_results.get(tool_key) or (
                     "Esta mesma ferramenta com os mesmos argumentos "
                     "já foi executada nesta solicitação. "
                     "Use o resultado anterior em vez de repetir a chamada."
-                )
-
-                ui.chat_tool(
-                    call.function.name,
-                    repeated=True,
                 )
 
                 continue
@@ -1088,12 +1506,12 @@ class CompatibleAgent:
 
                 tool_results[tool_key] = result
                 results_by_id[call.id] = result
-
-                ui.chat_tool(call.function.name)
+                arguments_by_id[call.id] = {}
 
                 continue
 
             executed_tool_calls.add(tool_key)
+            arguments_by_id[call.id] = arguments
             pending.append((call, tool_key, arguments))
 
         # ============================================================
@@ -1134,8 +1552,6 @@ class CompatibleAgent:
                     tool_results[tool_key] = result
                     results_by_id[call.id] = result
 
-                    ui.chat_tool(call.function.name)
-
         for call, tool_key, arguments in sequential_batch:
 
             if cancel_event is not None and cancel_event.is_set():
@@ -1149,7 +1565,19 @@ class CompatibleAgent:
             tool_results[tool_key] = result
             results_by_id[call.id] = result
 
-            ui.chat_tool(call.function.name)
+
+        # A interface mostra cada chamada uma única vez, na ordem em que o
+        # modelo a pediu, mesmo quando leituras foram executadas em paralelo.
+        if not self._operation_view_open:
+            ui.chat_operation_header(self.operation_state.objective)
+            self._operation_view_open = True
+        for call in tool_calls:
+            ui.chat_tool(
+                call.function.name,
+                repeated=call.id in repeated_ids,
+                arguments=arguments_by_id.get(call.id),
+                result=results_by_id.get(call.id, "Erro interno: resultado da ferramenta não encontrado."),
+            )
 
         # ============================================================
         # ANEXA MENSAGENS na ordem ORIGINAL das chamadas (independente
@@ -1250,9 +1678,17 @@ class CompatibleAgent:
             }
         )
 
+        # O estado de inspeção pertence a esta solicitação. Mantê-lo entre
+        # mensagens fazia uma leitura antiga parecer coberta pela inspeção
+        # atual e confundia tanto o modelo quanto a interface.
+        self._inspected_roots.clear()
+        self.operation_state.reset(user_message)
+        self._operation_view_open = False
+
         executed_tool_calls = set()
         tool_results = {}
         json_recovery_attempts = 0
+        empty_response_retries = 0
 
         for round_index in range(
             MAX_TOOL_ROUNDS
@@ -1441,31 +1877,71 @@ class CompatibleAgent:
             # ========================================================
 
             content = self._clean_model_output(
-                message.content or ""
+                self._message_text(message)
             )
 
             if cancel_event is not None and cancel_event.is_set():
                 return
 
-            self.messages.append(
-                {
-                    "role": "assistant",
-                    "content": content,
-                }
-            )
-
             if content:
-
+                self.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": content,
+                    }
+                )
+                if self._operation_view_open:
+                    ui.chat_operation_summary(self.operation_state.summary())
                 yield content
                 return
 
+            if empty_response_retries < 2:
+                empty_response_retries += 1
+                ui.chat_notice(
+                    "O provider retornou uma resposta vazia. "
+                    "Continuando com o contexto e as ferramentas já disponíveis."
+                )
+                # Não adiciona uma mensagem de assistente vazia. Uma mensagem
+                # vazia depois de um tool result faz alguns providers
+                # OpenAI-compatible rejeitarem a próxima edição. O usuário de
+                # recuperação é curto, preserva todo o histórico e orienta o
+                # modelo a continuar a tarefa, não a recomeçar.
+                self.messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Continue a tarefa a partir dos resultados das ferramentas "
+                            "já executadas. Preserve o contexto e, se a solicitação "
+                            "for de código, faça agora a edição necessária; não gere "
+                            "um resumo ainda."
+                        ),
+                    }
+                )
+                continue
+
             ui.chat_notice(
-                "O provider retornou uma resposta vazia. Gerando um resumo de recuperação."
+                "O provider continuou sem texto após as tentativas de continuação. "
+                "Gerando um resumo de recuperação."
             )
             break
 
         if cancel_event is not None and cancel_event.is_set():
             return
+
+        # O resumo final precisa de uma instrução explícita. Sem ela, alguns
+        # modelos recebem apenas o último resultado de ferramenta e retornam
+        # content vazio ou tentam iniciar outra leitura do zero.
+        self.messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Conclua a solicitação original usando todo o contexto e os "
+                    "resultados já presentes nesta conversa. Se ainda faltar uma "
+                    "alteração de código necessária, faça-a com a ferramenta; "
+                    "caso contrário, responda com um resumo curto do que foi feito."
+                ),
+            }
+        )
 
         final_kwargs = {
             "model": self.model,
@@ -1487,7 +1963,7 @@ class CompatibleAgent:
             )
             final_message = final_response.choices[0].message
             content = self._clean_model_output(
-                final_message.content or ""
+                self._message_text(final_message)
             )
         except CancellationRequested:
             return
@@ -1501,7 +1977,12 @@ class CompatibleAgent:
             # resumo final novamente.
             # ----------------------------------------------------------
 
-            if self._is_tool_choice_conflict(error):
+            has_tool_history = any(
+                message.get("role") == "tool"
+                for message in self.messages
+                if isinstance(message, dict)
+            )
+            if self._is_tool_choice_conflict(error) or has_tool_history:
 
                 try:
                     retry_kwargs = dict(final_kwargs)
@@ -1529,12 +2010,12 @@ class CompatibleAgent:
                         )
                         final_message = final_response.choices[0].message
                         content = self._clean_model_output(
-                            final_message.content or ""
+                            self._message_text(final_message)
                         )
 
                     else:
                         content = self._clean_model_output(
-                            retry_message.content or ""
+                            self._message_text(retry_message)
                         )
 
                 except CancellationRequested:
@@ -1573,9 +2054,14 @@ class CompatibleAgent:
         )
 
         if content:
+            if self._operation_view_open:
+                ui.chat_operation_summary(self.operation_state.summary())
             yield content
         else:
-            yield (
-                "Analisei os arquivos disponíveis, mas o provider não retornou "
-                "texto. Posso continuar a melhoria a partir do estado já lido."
+            content = (
+                "A operação terminou, mas o provedor não retornou um resumo. "
+                "O estado abaixo mostra o que foi lido e alterado."
             )
+            if self._operation_view_open:
+                ui.chat_operation_summary(self.operation_state.summary())
+            yield content
