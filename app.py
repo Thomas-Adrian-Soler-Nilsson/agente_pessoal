@@ -119,9 +119,21 @@ class LocalToolExecutor:
                 arguments.get("timeout", 900),
             )
         if name == "download_file":
+            url = arguments.get("url", "")
+            path = arguments.get("path", "")
+            # Download e uma acao externa: pede autorizacao pontual, sem
+            # transformar edicoes locais e testes em confirmacoes repetitivas.
+            try:
+                answer = input(
+                    f"\nAutorizar download para '{path}'? [s/N]: "
+                ).strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                answer = ""
+            if answer not in {"s", "sim", "y", "yes"}:
+                return "Download cancelado: autorização não concedida pelo usuário."
             return self.developer.download_file(
-                arguments.get("url", ""),
-                arguments.get("path", ""),
+                url,
+                path,
                 arguments.get("overwrite", False),
                 arguments.get("timeout", 120),
             )
@@ -453,7 +465,10 @@ def create_text_agent(router, choice, gemini_model=None, groq_model=None, mistra
     if choice == "4": return router.tokenharbor(tokenharbor_model), f"Token Harbor ({tokenharbor_model})"
     if choice == "5": return router.openrouter(openrouter_model), f"OpenRouter ({openrouter_model})"
     if choice == "6": return router.nvidia(nvidia_model), f"NVIDIA ({nvidia_model})"
-    if choice == "7": return router.ollama(ollama_model), f"Ollama ({ollama_model})"
+    if choice == "7":
+        agent = router.ollama(ollama_model)
+        actual_model = getattr(agent, "display_model", None) or ollama_model
+        return agent, f"Ollama ({actual_model})"
     if choice == "8":
         return router.huggingface(huggingface_model), f"Hugging Face ({huggingface_model})"
     return router.automatic(groq_model, openrouter_model, nvidia_model, mistral_model, huggingface_model), "Modo automático"

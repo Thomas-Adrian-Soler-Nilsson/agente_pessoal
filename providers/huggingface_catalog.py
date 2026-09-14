@@ -12,6 +12,8 @@ import os
 
 
 HF_CHAT_MODELS = [
+    # Modelo open-weight especializado em coding, agentes e terminal.
+    "CohereLabs/North-Mini-Code-1.0",
     "openai/gpt-oss-20b",
     "openai/gpt-oss-120b",
     "Qwen/Qwen3-30B-A3B-Instruct-2507",

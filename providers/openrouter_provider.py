@@ -8,6 +8,21 @@ from .compatible_agent import CompatibleAgent
 load_dotenv()
 
 DEFAULT_OPENROUTER_MODELS = [
+    # Visao, imagem e video (VLM)
+    "inclusionai/ling-3.0-flash-vl:free",
+    "thinkingmachines/inkling-small:free",
+    "google/gemma-4-31b-it:free",
+    "nex-agi/nex-n2.5-pro:free",
+    "nex-agi/nex-n2.5-mini:free",
+    "dots-studio/dots-3-note-preview:free",
+    # Agentes, raciocinio, contexto longo e programacao
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "cohere/north-mini-code:free",
+    "poolside/laguna-s-2.1:free",
+    "poolside/laguna-xs-2.1:free",
+    "liquid/lfm-2.5-2.6b:free",
+    # Modelos especializados que ainda respondem via chat
+    "inclusionai/ling-3.0-flash-fin:free",
     "z-ai/glm-5.2:free",
     "nvidia/nemotron-3-ultra-550b-a55b:free",
     "google/gemma-4-26b-a4b-it:free",
@@ -19,7 +34,13 @@ DEFAULT_OPENROUTER_MODELS = [
 
 def available_models():
     configured = os.getenv("OPENROUTER_MODELS", "")
-    return [model.strip() for model in configured.split(",") if model.strip()] or DEFAULT_OPENROUTER_MODELS
+    models = [model.strip() for model in configured.split(",") if model.strip()]
+    if not models:
+        return list(DEFAULT_OPENROUTER_MODELS)
+
+    # Mantem a ordem definida pelo usuario, mas evita chamadas duplicadas
+    # quando a lista do .env possui repeticoes.
+    return list(dict.fromkeys(models))
 
 
 class OpenRouterAgent:

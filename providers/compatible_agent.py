@@ -34,6 +34,8 @@ DESENVOLVIMENTO MULTILINGUAGEM:
 - Use open_terminal somente quando Thomas pedir explicitamente uma janela visível do CMD.
 - Use install_dependencies somente quando Thomas pedir para instalar dependencias.
 - Use download_file para baixar arquivos HTTP/HTTPS; nao use curl/wget no terminal.
+- O download_file sempre pede autorização explícita ao usuário. Só tente baixar
+  após confirmar uma URL real; se retornar 404, não repita a mesma URL.
 - Depois de editar codigo, valide e execute o teste adequado, analisando codigo de saida, stdout e stderr.
 - Nao tente acessar, imprimir ou copiar chaves, tokens, senhas ou arquivos .env.
 
@@ -240,7 +242,8 @@ read_file ou read_file_range depois se faltar um trecho específico.
 # leituras redundantes já esgotava o orçamento antes de qualquer edição
 # acontecer, e o modelo chegava na rodada final ainda querendo usar
 # ferramentas — o que causava a falha "resumo final falhou".
-MAX_TOOL_ROUNDS = 12
+# Permite ciclos completos de inspeção, edição e validação em projetos reais.
+MAX_TOOL_ROUNDS = 24
 
 
 class CancellationRequested(Exception):
@@ -1895,7 +1898,7 @@ class CompatibleAgent:
                 yield content
                 return
 
-            if empty_response_retries < 2:
+            if empty_response_retries < 4:
                 empty_response_retries += 1
                 ui.chat_notice(
                     "O provider retornou uma resposta vazia. "
