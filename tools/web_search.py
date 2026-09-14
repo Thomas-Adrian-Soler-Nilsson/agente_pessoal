@@ -104,6 +104,9 @@ def search_and_read(query, max_sites=3, max_chars_per_site=2500):
     for url, (title, text) in contents.items():
         parts.append(f"Fonte: {title} ({url})\n{text}\n")
 
+    return "\n".join(parts)
+
+
 def deep_search(query, max_sites=7, max_chars_per_site=3000):
     """
     Pesquisa profunda: mais fontes, mais conteúdo por fonte.
@@ -149,6 +152,9 @@ def deep_search(query, max_sites=7, max_chars_per_site=3000):
 
     for i, (url, (title, text)) in enumerate(contents.items(), start=1):
         parts.append(f"--- Fonte {i}: {title} ({url}) ---\n{text}\n")
+
+    return "\n".join(parts)
+
 
 import requests as _requests_lib
 

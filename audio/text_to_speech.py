@@ -377,19 +377,19 @@ class TextToSpeech:
             contents=text,
             config=types.GenerateContentConfig(
                 response_modalities=["AUDIO"],
-                speech_config=types.SpeechConfig(
-                    voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                            voice_name=self.gemini_tts_voice
-                        )
-                    )
-                ),
+                speech_config={
+                    "voice_config": {
+                        "prebuilt_voice_config": {
+                            "voice_name": self.gemini_tts_voice,
+                        }
+                    }
+                },
             ),
         )
 
         part = response.candidates[0].content.parts[0]
         blob = part.inline_data
-        data = blob.data
+        data = blob.data or b""
 
         mime = (
             getattr(

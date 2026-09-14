@@ -81,7 +81,8 @@ class BrowserTools:
 
         try:
             page = self._get_page()
-            page.goto(value, wait_until="domcontentloaded")
+            target = str(value)
+            page.goto(target, wait_until="domcontentloaded")
             return f"Página aberta: {page.title()} ({page.url})"
         except Exception as error:
             return f"Não consegui abrir a página: {error}"

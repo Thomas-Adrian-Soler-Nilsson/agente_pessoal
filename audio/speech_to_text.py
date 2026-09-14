@@ -109,6 +109,9 @@ class SpeechToText:
             if self.local_model is None:
                 self._load_local()
 
+        if self.local_model is None:
+            self._load_local()
+
         return self._transcribe_local(audio_file, prompt)
 
     def _transcribe_groq(self, audio_file: str, prompt: str) -> str:

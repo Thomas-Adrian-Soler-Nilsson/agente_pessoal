@@ -93,6 +93,50 @@ def _generate_hf_image_file(prompt: str) -> Path:
     return path
 
 
+def _build_fallback_hand_object(prompt: str) -> Path:
+    """Cria um low-poly OBJ local para prompts de mão/FPS quando os serviços externos falham."""
+    path = _stamp("3d", ".obj")
+    lower = (prompt or "").lower()
+    is_hand = any(token in lower for token in ["mão", "mao", "hand", "fps", "arma", "gun", "weapon"])
+    title = "LowPolyHand" if is_hand else "FallbackObject"
+    vertices = [
+        (0.0, 0.0, 0.0),
+        (0.45, 0.0, 0.05),
+        (0.35, 0.20, 0.05),
+        (0.10, 0.45, 0.05),
+        (-0.15, 0.65, 0.0),
+        (-0.25, 0.25, -0.05),
+        (0.0, -0.25, 0.05),
+        (0.25, -0.60, 0.0),
+        (-0.15, -0.65, 0.0),
+        (0.0, -0.75, 0.10),
+        (0.45, 0.12, 0.18),
+        (0.52, 0.22, 0.22),
+        (0.56, 0.45, 0.20),
+        (0.54, 0.62, 0.15),
+        (0.25, 0.76, 0.10),
+        (-0.05, 0.82, 0.10),
+        (-0.25, 0.70, 0.05),
+        (-0.35, 0.45, 0.0),
+        (-0.33, 0.17, -0.05),
+        (-0.22, -0.15, -0.05),
+        (-0.12, -0.48, -0.02),
+    ]
+    faces = [
+        (1, 2, 3), (1, 3, 4), (1, 4, 5), (1, 5, 6), (1, 6, 7),
+        (1, 7, 8), (1, 8, 9), (1, 9, 10), (1, 10, 11), (1, 11, 12),
+        (1, 12, 13), (1, 13, 14), (1, 14, 15), (1, 15, 16), (1, 16, 17),
+        (1, 17, 18), (1, 18, 19), (1, 19, 20), (1, 20, 21),
+    ]
+    lines = [f"# {title}"]
+    for x, y, z in vertices:
+        lines.append(f"v {x:.6f} {y:.6f} {z:.6f}")
+    for a, b, c in faces:
+        lines.append(f"f {a} {b} {c}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
 def generate_3d(prompt: str, model: str | None = None, image_path: str | None = None) -> str:
     """Generate a mesh through the Hugging Face Gradio Space."""
     try:
@@ -102,65 +146,107 @@ def generate_3d(prompt: str, model: str | None = None, image_path: str | None = 
             "A gera\u00e7\u00e3o 3D precisa do pacote gradio_client."
         ) from exc
 
-    model = model or os.getenv("HF_3D_MODEL", "tencent/Hunyuan3D-2")
-    space = os.getenv("HF_3D_SPACE", "tencent/Hunyuan3D-2")
+    configured = [
+        item.strip()
+        for item in (model or os.getenv("HF_3D_MODEL", "") or "tencent/Hunyuan3D-2").split(",")
+        if item.strip()
+    ]
+    extra_spaces = [
+        item.strip()
+        for item in os.getenv("HF_3D_MODELS", "").split(",")
+        if item.strip()
+    ]
+    if os.getenv("HF_3D_SPACE", "").strip():
+        extra_spaces.insert(0, os.getenv("HF_3D_SPACE", "").strip())
+    spaces = []
+    for item in configured + extra_spaces:
+        if item not in spaces:
+            spaces.append(item)
+    if not spaces:
+        spaces = ["tencent/Hunyuan3D-2"]
+
     token = _token()
-    client = Client(space, token=token)
     caption = (prompt or "").strip() or None
     image = handle_file(image_path) if image_path else None
     endpoint = os.getenv("HF_3D_API_NAME", "/generation_all").strip() or "/generation_all"
+    errors: list[str] = []
 
-    def predict(caption_value, image_value, api_name):
-        return client.predict(
-            caption_value,
-            image_value,
-            50,
-            7.5,
-            1234,
-            256,
-            True,
-            api_name=api_name,
-        )
-
-    try:
-        result = predict(caption, image, endpoint)
-    except Exception as first_error:
+    def predict(client, caption_value, image_value, api_name):
+        payload = {"api_name": api_name}
+        if caption_value is not None:
+            payload["prompt"] = caption_value
+        if image_value is not None:
+            payload["image"] = image_value
         try:
-            result = predict(caption, image, "/shape_generation")
-        except Exception as second_error:
-            if image_path or not caption:
-                raise RuntimeError(
-                    f"Falha no Space 3D ({space}): {second_error}"
-                ) from second_error
-            # Hosted revisions may disable text-to-3D. In that case, create a
-            # reference image with HF and use the same Space in image-to-3D.
-            reference = _generate_hf_image_file(caption)
+            return client.predict(**payload)
+        except TypeError:
+            args = []
+            if caption_value is not None:
+                args.append(caption_value)
+            if image_value is not None:
+                args.append(image_value)
+            return client.predict(*args, api_name=api_name)
+
+    last_error = None
+    for space in spaces:
+        try:
+            client = Client(space, token=token)
             try:
-                result = predict(None, handle_file(str(reference)), "/generation_all")
-            except Exception as third_error:
-                raise RuntimeError(
-                    f"Falha no Space 3D ({space}): {third_error}"
-                ) from third_error
+                result = predict(client, caption, image, endpoint)
+            except Exception as first_error:
+                try:
+                    result = predict(client, caption, image, "/shape_generation")
+                except Exception as second_error:
+                    if image_path or not caption:
+                        raise RuntimeError(
+                            f"Falha no Space 3D ({space}): {second_error}"
+                        ) from second_error
+                    reference = _generate_hf_image_file(caption)
+                    try:
+                        result = predict(client, None, handle_file(str(reference)), "/generation_all")
+                    except Exception as third_error:
+                        raise RuntimeError(
+                            f"Falha no Space 3D ({space}): {third_error}"
+                        ) from third_error
+        except Exception as exc:
+            last_error = exc
+            errors.append(f"{space}: {exc}")
+            continue
 
-    source = _find_3d_file(result)
-    if not source:
-        raise RuntimeError(
-            "O Space 3D respondeu, mas n\u00e3o retornou uma malha GLB/GLTF/OBJ/STL/PLY."
+        source = _find_3d_file(result)
+        if not source:
+            errors.append(f"{space}: o Space 3D respondeu, mas não retornou uma malha GLB/GLTF/OBJ/STL/PLY.")
+            continue
+
+        target = _stamp("3d", source.suffix.lower() or ".glb")
+        target.write_bytes(source.read_bytes())
+        viewer = target.with_suffix(".html")
+        viewer.write_text(
+            "<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>Agente Pessoal - Modelo 3D</title>"
+            "<script type='module' src='https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js'></script>"
+            "<style>html,body{margin:0;height:100%;background:#101114}model-viewer{width:100%;height:100%}</style>"
+            "</head><body><model-viewer src='" + target.as_uri() + "' camera-controls auto-rotate shadow-intensity='1' exposure='1' environment-image='neutral'></model-viewer></body></html>",
+            encoding="utf-8",
         )
+        return f"Modelo 3D gerado com {space}. Arquivo: {target}. Visualizador: {viewer}"
 
-    target = _stamp("3d", source.suffix.lower() or ".glb")
-    target.write_bytes(source.read_bytes())
-    viewer = target.with_suffix(".html")
+    fallback = _build_fallback_hand_object(prompt or "mão de fps")
+    viewer = fallback.with_suffix(".html")
     viewer.write_text(
         "<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>Agente Pessoal - Modelo 3D</title>"
+        "<title>Agente Pessoal - Modelo 3D fallback</title>"
         "<script type='module' src='https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js'></script>"
         "<style>html,body{margin:0;height:100%;background:#101114}model-viewer{width:100%;height:100%}</style>"
-        "</head><body><model-viewer src='" + target.as_uri() + "' camera-controls auto-rotate shadow-intensity='1' exposure='1' environment-image='neutral'></model-viewer></body></html>",
+        "</head><body><model-viewer src='" + fallback.as_uri() + "' camera-controls auto-rotate shadow-intensity='1' exposure='1' environment-image='neutral'></model-viewer></body></html>",
         encoding="utf-8",
     )
-    return f"Modelo 3D gerado com {model}. Arquivo: {target}. Visualizador: {viewer}"
+    if last_error is not None:
+        return f"Fallback local gerado após falha de todos os Spaces HF: {fallback}. Visualizador: {viewer}. Detalhes: {'; '.join(errors)}"
+
+    return f"Fallback local gerado: {fallback}. Visualizador: {viewer}."
 
 
 def _legacy_generate_3d(prompt: str, model: str | None = None, image_path: str | None = None) -> str:

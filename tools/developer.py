@@ -193,7 +193,9 @@ class DeveloperTools:
         except FileNotFoundError as error:
             return f"Runtime/comando não encontrado: {error}"
         except subprocess.TimeoutExpired as error:
-            output = self._redact((error.stdout or "") + "\n" + (error.stderr or ""))
+            stdout_text = error.stdout or ""
+            stderr_text = error.stderr or ""
+            output = self._redact(str(stdout_text) + "\n" + str(stderr_text))
             return f"Processo encerrado por exceder {timeout}s.\n{self._clip(output)}"
         except Exception as error:
             return f"Erro ao executar processo: {error}"

@@ -55,6 +55,8 @@ class Webcam:
     ):
 
         self.open()
+        if self.camera is None:
+            raise RuntimeError("Falha ao inicializar a webcam.")
 
         success, frame = (
             self.camera.read()

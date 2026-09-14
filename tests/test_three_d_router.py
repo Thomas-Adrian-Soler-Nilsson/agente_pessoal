@@ -24,6 +24,16 @@ class ThreeDRouterTests(unittest.TestCase):
         nvidia.assert_called_once()
         free.assert_called_once_with("foguete", None)
 
+    @patch.dict(os.environ, {"HF_TOKEN": "configured"}, clear=False)
+    @patch("tools.three_d_router.generate_hf_3d", return_value="hf-result")
+    @patch("tools.three_d_router.generate_threews", return_value="free-result")
+    def test_uses_huggingface_when_token_is_configured(self, free, hf):
+        from tools.three_d_router import generate_3d_auto
+
+        self.assertEqual(generate_3d_auto("mão de fps"), "hf-result")
+        hf.assert_called_once_with("mão de fps", image_path=None)
+        free.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
