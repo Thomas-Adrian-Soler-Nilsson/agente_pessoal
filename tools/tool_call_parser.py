@@ -14,18 +14,23 @@ def is_tool_json_error(error) -> bool:
         "failed to parse tool call arguments as json" in text
         or "tool_use_failed" in text
         or "invalid_request_error" in text
+        or "jsondecodeerror" in text
+        or "toolargumentserror" in text
     )
 
 
 def failed_tool_name(error) -> str:
     generated = _failed_generation(error).lower()
     for name in (
+        "write_files",
         "write_file_chunk",
         "write_file",
         "edit_file",
         "execute_file",
+        "run_code_file",
+        "run_terminal",
     ):
-        if f'"name": "{name}"' in generated or f'"name":"{name}"' in generated:
+        if re.search(rf'["\']name["\']\s*:\s*["\']{name}["\']', generated):
             return name
     return ""
 
@@ -37,9 +42,15 @@ def parse_tool_arguments(raw: str) -> dict:
         return {}
 
     candidate = raw.strip()
+    if candidate.startswith("```"):
+        lines = candidate.splitlines()
+        if len(lines) >= 2:
+            candidate = "\n".join(lines[1:-1]).strip()
+
     decoders = (
-        lambda value: json.loads(value),
-        lambda value: json.loads(value.replace("\\\\", "\\")),
+        lambda value: json.loads(value, strict=False),
+        lambda value: json.loads(value.replace("\\\\", "\\"), strict=False),
+        lambda value: json.loads(_repair_truncated_json(value), strict=False),
         lambda value: ast.literal_eval(value),
     )
     for decoder in decoders:
@@ -49,6 +60,15 @@ def parse_tool_arguments(raw: str) -> dict:
                 return parsed
         except (ValueError, SyntaxError, json.JSONDecodeError):
             continue
+
+    # Fallback via regex para recuperação de escrita de código (write_file / write_file_chunk)
+    path_match = re.search(r'["\']path["\']\s*:\s*["\']([^"\']+)["\']', candidate)
+    if path_match:
+        content_match = re.search(r'["\']content["\']\s*:\s*["\'](.*)', candidate, re.DOTALL)
+        if content_match:
+            val = content_match.group(1)
+            val = re.sub(r'["\']\s*\}?\s*$', "", val)
+            return {"path": path_match.group(1), "content": val}
 
     raise ToolArgumentsError("Argumentos da ferramenta não formam um objeto JSON válido.")
 
@@ -76,7 +96,7 @@ def _repair_truncated_json(text: str) -> str:
     """
     Fecha aspas e chaves/colchetes deixados abertos quando a geração do
     modelo é cortada no meio do conteúdo (ex.: max_completion_tokens
-    atingido durante um write_file_chunk com um arquivo grande).
+    atingido durante um write_file com um arquivo grande).
 
     Não tenta validar semântica, apenas devolver algo parseável por
     json.loads contendo o máximo de conteúdo real possível.
@@ -121,20 +141,38 @@ def recover_tool_call(error):
     if not generated:
         return None
 
-    marker = generated.find("{\"name\"")
-    if marker < 0:
-        marker = generated.find("{\'name\'")
-    if marker < 0:
+    match = re.search(r'\{\s*["\']name["\']\s*:', generated)
+    if not match:
         return None
 
-    candidate = generated[marker:]
-    try:
-        payload = json.loads(candidate)
-    except json.JSONDecodeError:
+    candidate = generated[match.start():]
+    payload = None
+    for decoder in (
+        lambda text: json.loads(text, strict=False),
+        lambda text: json.loads(_repair_truncated_json(text), strict=False),
+        lambda text: ast.literal_eval(text),
+    ):
         try:
-            payload = json.loads(_repair_truncated_json(candidate))
-        except (ValueError, json.JSONDecodeError):
-            return None
+            payload = decoder(candidate)
+            if isinstance(payload, dict) and "name" in payload:
+                break
+        except Exception:
+            continue
+
+    if not isinstance(payload, dict):
+        name_match = re.search(r'["\']name["\']\s*:\s*["\']([^"\']+)["\']', candidate)
+        if name_match:
+            tool_name = name_match.group(1)
+            args_match = re.search(r'["\']arguments["\']\s*:\s*(\{.*)', candidate, re.DOTALL)
+            if args_match:
+                try:
+                    args = parse_tool_arguments(args_match.group(1))
+                    payload = {"name": tool_name, "arguments": args}
+                except Exception:
+                    pass
+
+    if not isinstance(payload, dict):
+        return None
 
     name = payload.get("name")
     arguments = payload.get("arguments", {})

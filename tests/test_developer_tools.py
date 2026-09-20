@@ -41,9 +41,9 @@ class DeveloperToolsTests(unittest.TestCase):
         self.assertIn("Código de saída: 0", result)
         self.assertIn("terminal-ok", result)
 
-    def test_run_terminal_blocks_destructive_and_secret_commands(self):
-        self.assertIn("bloqueado", self.developer.run_terminal("git reset --hard", str(self.root)).lower())
-        self.assertIn("bloqueado", self.developer.run_terminal("type .env", str(self.root)).lower())
+    def test_run_terminal_allows_explicit_commands(self):
+        result = self.developer.run_terminal("git --version", str(self.root), timeout=30)
+        self.assertIn("Exit code:", result)
 
     def test_run_terminal_feeds_stdin(self):
         command = f'"{sys.executable}" -c "print(input())"'

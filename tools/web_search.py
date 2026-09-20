@@ -1,4 +1,6 @@
 import concurrent.futures
+import re
+from urllib.parse import urlsplit
 
 import requests as _requests_lib
 
@@ -16,8 +18,48 @@ HEADERS = {
 }
 
 
+def _probe_url(item):
+    """Confirma que o resultado existe e segue redirects antes de entregá-lo."""
+    url = item.get("url", "")
+    try:
+        response = requests.get(
+            url,
+            headers=HEADERS,
+            timeout=(4, 8),
+            allow_redirects=True,
+            stream=True,
+        )
+        status = response.status_code
+        final_url = response.url
+        response.close()
+        if status < 200 or status >= 400:
+            return None
+        parsed = urlsplit(final_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+        item = dict(item)
+        item["url"] = final_url
+        item["status"] = status
+        return item
+    except Exception:
+        return None
+
+
+def _rank_url(item, query):
+    text = f"{item.get('title', '')} {item.get('url', '')}".lower()
+    terms = [term for term in re.findall(r"[\w.-]+", query.lower()) if len(term) > 2]
+    score = sum(3 if term in item.get("title", "").lower() else 1 for term in terms if term in text)
+    url = item.get("url", "").lower()
+    if any(marker in url for marker in ("/tags/", "/search", "/category", "?q=")):
+        score -= 3
+    if any(term in query.lower() for term in ("download", "baixar", "modelo", "asset")):
+        if any(marker in text for marker in ("download", ".glb", ".gltf", ".zip", "downloadable")):
+            score += 4
+    return score
+
+
 def search_urls(query, max_results=5):
-    """Pesquisa usando a lib ddgs (mais resistente a bloqueio que scraping cru)."""
+    """Busca, valida, segue redirects, remove duplicatas e ranqueia URLs."""
     query = (query or "").strip()
     if not query:
         return []
@@ -28,11 +70,23 @@ def search_urls(query, max_results=5):
     except Exception:
         return []
 
-    return [
+    candidates = [
         {"title": item.get("title", ""), "url": item.get("href", "")}
         for item in results
         if item.get("href")
     ]
+    unique = []
+    seen = set()
+    for item in candidates:
+        key = item["url"].split("#", 1)[0].rstrip("/").lower()
+        if key and key not in seen:
+            seen.add(key)
+            unique.append(item)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(5, len(unique) or 1)) as pool:
+        checked = list(pool.map(_probe_url, unique[: max_results * 3]))
+    valid = [item for item in checked if item]
+    valid.sort(key=lambda item: _rank_url(item, query), reverse=True)
+    return valid[:max_results]
 
 
 def _fetch_one(url, max_chars):
@@ -61,6 +115,31 @@ def _fetch_one(url, max_chars):
         return None
 
 
+def _fetch_many(items, max_chars, timeout):
+    """Fetch pages with a hard deadline and keep partial results."""
+    if not items:
+        return {}
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=min(5, len(items)))
+    futures = {
+        executor.submit(_fetch_one, item["url"], max_chars): item
+        for item in items
+    }
+    contents = {}
+    try:
+        done, _ = concurrent.futures.wait(futures, timeout=timeout)
+        for future in done:
+            item = futures[future]
+            try:
+                text = future.result()
+            except Exception:
+                text = None
+            if text:
+                contents[item["url"]] = (item["title"], text)
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+    return contents
+
+
 def search_and_read(query, max_sites=3, max_chars_per_site=2500):
     """
     Pesquisa e lê múltiplos sites em paralelo.
@@ -75,23 +154,7 @@ def search_and_read(query, max_sites=3, max_chars_per_site=2500):
 
     picked = urls[:max_sites]
 
-    contents = {}
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_sites) as executor:
-        futures = {
-            executor.submit(_fetch_one, item["url"], max_chars_per_site): item
-            for item in picked
-        }
-
-        for future in concurrent.futures.as_completed(futures, timeout=15):
-            item = futures[future]
-            try:
-                text = future.result()
-            except Exception:
-                text = None
-
-            if text:
-                contents[item["url"]] = (item["title"], text)
+    contents = _fetch_many(picked, max_chars_per_site, timeout=15)
 
     if not contents:
         return (
@@ -103,6 +166,8 @@ def search_and_read(query, max_sites=3, max_chars_per_site=2500):
 
     for url, (title, text) in contents.items():
         parts.append(f"Fonte: {title} ({url})\n{text}\n")
+
+    return "\n".join(parts)
 
 def deep_search(query, max_sites=7, max_chars_per_site=3000):
     """
@@ -118,23 +183,7 @@ def deep_search(query, max_sites=7, max_chars_per_site=3000):
 
     picked = urls[:max_sites]
 
-    contents = {}
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_sites) as executor:
-        futures = {
-            executor.submit(_fetch_one, item["url"], max_chars_per_site): item
-            for item in picked
-        }
-
-        for future in concurrent.futures.as_completed(futures, timeout=25):
-            item = futures[future]
-            try:
-                text = future.result()
-            except Exception:
-                text = None
-
-            if text:
-                contents[item["url"]] = (item["title"], text)
+    contents = _fetch_many(picked, max_chars_per_site, timeout=25)
 
     if not contents:
         return (
@@ -222,23 +271,7 @@ def code_search(query, max_sites=5, max_chars_per_site=3000):
         return f"Não encontrei resultados de código/documentação para '{query}'."
 
     picked = urls[:max_sites]
-    contents = {}
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_sites) as executor:
-        futures = {
-            executor.submit(_fetch_one, item["url"], max_chars_per_site): item
-            for item in picked
-        }
-
-        for future in concurrent.futures.as_completed(futures, timeout=20):
-            item = futures[future]
-            try:
-                text = future.result()
-            except Exception:
-                text = None
-
-            if text:
-                contents[item["url"]] = (item["title"], text)
+    contents = _fetch_many(picked, max_chars_per_site, timeout=20)
 
     if not contents:
         return f"Encontrei páginas para '{query}', mas não consegui extrair conteúdo."

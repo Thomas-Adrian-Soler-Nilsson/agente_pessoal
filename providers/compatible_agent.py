@@ -2,6 +2,8 @@ import copy
 import json
 import time
 import concurrent.futures
+import os
+import re
 from typing import Callable
 from pathlib import Path
 
@@ -34,31 +36,31 @@ DESENVOLVIMENTO MULTILINGUAGEM:
 - Use open_terminal somente quando Thomas pedir explicitamente uma janela visível do CMD.
 - Use install_dependencies somente quando Thomas pedir para instalar dependencias.
 - Use download_file para baixar arquivos HTTP/HTTPS; nao use curl/wget no terminal.
+- Se Thomas pedir um arquivo sem fornecer uma URL, pesquise primeiro com web_search
+  e use somente um link direto encontrado na fonte oficial. Nunca invente URLs,
+  caminhos, nomes de domínio ou extensões. Se retornar 404, não tente a mesma URL.
 - O download_file sempre pede autorização explícita ao usuário. Só tente baixar
   após confirmar uma URL real; se retornar 404, não repita a mesma URL.
 - Depois de editar codigo, valide e execute o teste adequado, analisando codigo de saida, stdout e stderr.
 - Nao tente acessar, imprimir ou copiar chaves, tokens, senhas ou arquivos .env.
+- Mantenha a proveniência da tarefa: diferencie arquivo encontrado no disco,
+  arquivo baixado, arquivo gerado e arquivo apenas mencionado. Só afirme que
+  algo foi baixado se houver uma tool de download ou terminal com resultado de
+  sucesso; consulte a memória operacional antes de responder sobre passos
+  anteriores.
 
-- Use ferramentas somente quando elas forem realmente necessárias.
-- Não repita a mesma chamada de ferramenta com os mesmos argumentos.
-- Se uma ferramenta já retornou informação suficiente para responder, pare de usar ferramentas.
-- Para análise de código, normalmente uma única leitura do arquivo é suficiente.
-- Se read_file já retornou o conteúdo de um caminho nesta solicitação,
-  use esse conteúdo em vez de ler o mesmo arquivo novamente.
-- Não leia novamente um arquivo apenas para confirmar o conteúdo.
-- Não fique em um ciclo de ferramentas tentando obter exatamente a mesma informação.
-- Depois de obter dados suficientes, produza a resposta final.
-- Para tarefas de criação de código, seja objetivo: faça o menor número de
-  chamadas necessárias. Em geral: escreva o arquivo, execute uma vez e só
-  corrija se o resultado realmente indicar erro.
+- Use ferramentas com inteligência e iniciativa para cumprir a solicitação do Thomas.
+- Dentro da mesma resposta, não repita a mesma chamada de ferramenta com os mesmos argumentos.
+  Em uma nova rodada, pode repetir a tool se o estado do projeto mudou, se a
+  validação falhou ou se precisar confirmar o resultado.
+- Se uma ferramenta já retornou informação suficiente para responder, prossiga para a resposta ou próxima ação.
+- Não fique em um ciclo infinito tentando obter exatamente a mesma informação.
+- Quando precisar de várias informações ou arquivos independentes entre si (por
+  exemplo, criar múltiplos arquivos ou ler 2-3 arquivos), você pode pedir
+  todas as chamadas necessárias na mesma resposta ou usar write_files.
+  Isso reduz rodadas e deixa o processo muito mais ágil.
 - Não use marcadores de emoção como [calm] ou [happy] em chamadas de
   ferramenta nem dentro de código. Eles são reservados à síntese de voz.
-- Quando precisar de várias informações independentes entre si (por
-  exemplo, ler 2-3 arquivos diferentes, ou fazer buscas separadas),
-  peça todas as chamadas de ferramenta necessárias na mesma resposta
-  em vez de uma por vez. Isso reduz o número de rodadas e deixa a
-  conversa mais rápida. Só faça chamadas sequenciais quando uma
-  realmente depender do resultado da anterior.
 
 MEMÓRIA TEMPORAL:
 Você possui uma memória temporal persistente local.
@@ -122,6 +124,10 @@ Use a conversa atual para contexto imediato e a memória temporal para
 informações persistentes.
 
 Use open_directory para abrir uma pasta no Explorador de Arquivos.
+Quando uma pesquisa de assets não retornar um arquivo ou URL direto válido,
+não invente nomes como assets/hand.glb, weapon.glb ou texturas. Use apenas
+assets confirmados pela tool; se não houver nenhum, implemente um fallback
+procedural e informe claramente o que ficou pendente.
 Para Downloads, passe "Downloads" ou "OneDrive\\Downloads".
 Use open_application apenas para abrir aplicativos.
 Use search_files quando o usuário quiser encontrar arquivos; a busca aceita
@@ -130,56 +136,22 @@ Sem pasta específica, use path "~" para procurar nas pastas permitidas.
 Se encontrar o arquivo, use read_file com o caminho retornado.
 Use list_directory para mostrar o conteúdo de uma pasta.
 
-CRIAÇÃO E EXECUÇÃO DE CÓDIGO:
+CRIAÇÃO E DESENVOLVIMENTO DE APLICATIVOS E CÓDIGO:
 
-Antes de alterar um projeto, siga esta ordem: inspecione a estrutura, leia
-somente os arquivos relevantes, altere incrementalmente, valide a gravação,
-execute quando solicitado e verifique stdout, stderr e código de saída.
-Não reconstrua arquivos grandes inteiros se edit_file ou write_file_chunk
-resolverem a alteração.
-
-Quando Thomas pedir para criar código e salvar em arquivo:
-
-1. Gere o código.
-2. Escolha um caminho apropriado.
-  3. Prefira write_file para arquivos pequenos ou médios, pois ele grava de
-     forma atômica e evita várias chamadas duplicadas. Use edit_file para uma
-     alteração localizada. Use write_file_chunk apenas quando o conteúdo for
-     realmente grande ou quando uma chamada única for cortada pelo provedor;
-     não fragmente um arquivo desnecessariamente em dezenas de chamadas.
-4. Não peça para Thomas copiar e colar manualmente.
-5. Confirme o caminho retornado pela ferramenta.
-
-Quando Thomas pedir para executar, testar ou rodar um arquivo:
-
-1. Verifique qual arquivo deve ser executado.
-2. Para Python, JavaScript, TypeScript e outros scripts, prefira run_code_file.
-   Use execute_file principalmente para abrir HTML no navegador.
-3. Analise STDOUT, STDERR e código de saída.
-4. Se houver erro, explique o erro.
-5. Quando possível, corrija o arquivo usando edit_file ou write_file_chunk.
-6. Execute novamente para validar a correção.
-
-Para programas interativos que usam input(), nunca execute o processo sem dados.
-Use input_text com entradas de teste completas ou passe argumentos de linha de
-comando. Se um processo exceder o timeout, nao repita o mesmo comando: analise
-se ele ficou esperando stdin, corrija a chamada e tente uma unica vez.
-Depois de uma execucao com Exit code diferente de 0, nao repita a mesma chamada
-sem alterar o comando, os argumentos ou o arquivo responsavel pelo erro.
-
-Depois de write_file, write_file_chunk ou edit_file, confirme o resultado
-com get_file_info ou uma leitura objetiva antes de declarar concluído.
-
-Para páginas HTML:
-- crie os arquivos necessários;
-- use execute_file no index.html para abrir no navegador.
-
-Para projetos com múltiplos arquivos:
-- crie cada arquivo necessário individualmente;
-- mantenha todos na mesma pasta do projeto;
-- depois execute o arquivo de entrada apropriado.
-
-Nunca diga para Thomas criar manualmente um arquivo que você consegue criar usando write_file.
+Quando Thomas pedir para criar um aplicativo, site, jogo ou projeto de código:
+1. Planeje a estrutura e sinta-se à vontade para usar as ferramentas necessárias para entregar o projeto completo e funcional de ponta a ponta.
+2. Para projetos de múltiplos arquivos (ex: HTML, CSS, JavaScript ou scripts Python e configurações):
+   - Use preferencialmente write_files para criar todos os arquivos necessários de uma só vez, ou faça chamadas de write_file com o código completo de cada um.
+   - Forneça sempre o código COMPLETO e funcional em cada arquivo. Nunca use placeholders ou omita partes do código.
+3. O write_file e o write_files criam diretórios automaticamente e já validam a gravação e a sintaxe no disco.
+   Não é necessário chamar read_file ou get_file_info após gravar apenas para confirmar se o arquivo foi salvo.
+4. Use edit_file para modificações cirúrgicas em arquivos existentes, e write_file_chunk apenas ao anexar dados ou se um arquivo for massivo.
+5. Sempre teste o projeto criado:
+   - Para páginas web / HTML, use execute_file ou run_code_file no index.html para abrir diretamente no navegador.
+   - Para scripts e módulos (Python, Node, etc.), use run_code_file para verificar se executam sem erro.
+   - Para servidores de desenvolvimento que ficam rodando continuamente (ex: python -m http.server, npm run dev, streamlit run), use open_terminal para abri-los em uma janela de CMD visível sem travar por timeout.
+6. Se um teste acusar erro, analise stdout/stderr e corrija o arquivo afetado com edit_file ou write_file.
+7. Nunca diga para Thomas criar ou copiar manualmente arquivos que você mesmo pode criar.
 
 Use web_search como primeira opção sempre que Thomas pedir para
 pesquisar, procurar ou ler conteúdo da internet. É rápida, não depende
@@ -192,7 +164,22 @@ CHECKLIST OBRIGATORIO DE CODIGO:
 - Para uma calculadora ou script interativo, prefira argumentos de teste ou input_text e
   confirme um resultado deterministico, como `Resultado: 8`.
 
-Use browser_navigate apenas quando web_search falhar,
+Depois de navegar, use browser_snapshot ou browser_screenshot antes de clicar.
+Use browser_click/browser_fill para elementos identificáveis; use
+browser_mouse_click somente quando a inspeção visual indicar coordenadas.
+Para downloads iniciados por um site, use browser_download e confirme o
+arquivo salvo antes de integrá-lo ao projeto.
+
+Use browser_navigate quando a tarefa exigir interaÃ§Ã£o real ou quando houver
+uma pÃ¡gina de resultado que precise de botÃ£o, login ou download. Uma URL de
+resultado de busca nÃ£o Ã© automaticamente uma URL de arquivo.
+Fluxo confiÃ¡vel para baixar: web_search -> browser_navigate ->
+browser_snapshot -> browser_click/browser_download -> confirme o arquivo no
+disco. Se a navegaÃ§Ã£o retornar HTTP 404/403/500, abandone essa URL e escolha
+outro resultado; nÃ£o repita a mesma URL.
+Quando Thomas pedir para procurar dentro de um site, use browser_search_site
+depois de abrir a pÃ¡gina inicial; ele percorre somente links internos vÃ¡lidos
+e retorna a URL exata e o trecho encontrado.
 ou quando o site exigir interação real.
 
 Use deep_search apenas quando Thomas pedir explicitamente uma pesquisa
@@ -243,7 +230,7 @@ read_file ou read_file_range depois se faltar um trecho específico.
 # acontecer, e o modelo chegava na rodada final ainda querendo usar
 # ferramentas — o que causava a falha "resumo final falhou".
 # Permite ciclos completos de inspeção, edição e validação em projetos reais.
-MAX_TOOL_ROUNDS = 24
+MAX_TOOL_ROUNDS = 60
 
 
 class CancellationRequested(Exception):
@@ -388,6 +375,54 @@ def build_tools():
             ["selector", "value"],
         ),
         (
+            "browser_snapshot",
+            "Captura um resumo atualizado da página para decidir os próximos elementos.",
+            {"max_chars": {"type": "integer"}},
+            [],
+        ),
+        (
+            "browser_screenshot",
+            "Captura a tela atual do navegador para inspeção visual.",
+            {"path": {"type": "string"}},
+            [],
+        ),
+        (
+            "browser_mouse_click",
+            "Clica por coordenadas na página quando não houver seletor confiável.",
+            {"x": {"type": "number"}, "y": {"type": "number"}, "button": {"type": "string"}},
+            ["x", "y"],
+        ),
+        (
+            "browser_mouse_move",
+            "Move o mouse para coordenadas da página.",
+            {"x": {"type": "number"}, "y": {"type": "number"}},
+            ["x", "y"],
+        ),
+        (
+            "browser_type",
+            "Digita texto no elemento atualmente focado.",
+            {"text": {"type": "string"}, "delay": {"type": "number"}},
+            ["text"],
+        ),
+        (
+            "browser_press",
+            "Pressiona uma tecla no navegador, como Enter, Tab ou Escape.",
+            {"key": {"type": "string"}},
+            ["key"],
+        ),
+        (
+            "browser_download",
+            "Clica em um link/botão de download e salva o arquivo no caminho indicado.",
+            {"selector": {"type": "string"}, "path": {"type": "string"}},
+            ["selector"],
+        ),
+        (
+            "browser_search_site",
+            "Pesquisa termos em várias páginas internas do site atual, ignorando links externos e páginas HTTP inválidas.",
+            {"query": {"type": "string"}, "max_pages": {"type": "integer"}},
+            ["query"],
+        ),
+        (
             "list_directory",
             "Lista arquivos e pastas de um diretório.",
             {
@@ -452,27 +487,50 @@ def build_tools():
         (
             "write_file",
             (
-                "Cria ou sobrescreve um arquivo pequeno dentro das pastas "
-                "permitidas pelo agente. Use quando Thomas pedir para "
-                "criar um arquivo. Para arquivos grandes, prefira "
-                "write_file_chunk ou edit_file."
+                "Cria ou sobrescreve um arquivo com o código ou conteúdo completo. "
+                "Cria pastas automaticamente se não existirem. Use para gerar páginas web, "
+                "scripts, componentes, arquivos de configuração e aplicações completas."
             ),
             {
                 "path": {
                     "type": "string",
-                    "description": (
-                        "Caminho completo ou relativo do arquivo."
-                    ),
+                    "description": "Caminho completo ou relativo do arquivo.",
                 },
                 "content": {
                     "type": "string",
-                    "description": (
-                            "Conteúdo curto. Limite aproximado de 600 caracteres; "
-                            "para código grande use write_file_chunk em várias chamadas."
-                    ),
+                    "description": "Conteúdo completo a ser gravado no arquivo.",
                 },
             },
             ["path", "content"],
+        ),
+        (
+            "write_files",
+            (
+                "Cria ou sobrescreve múltiplos arquivos de uma só vez com seus conteúdos completos. "
+                "Ferramenta ideal e recomendada para gerar aplicativos completos (ex: index.html, style.css, script.js) "
+                "de forma rápida, robusta e em uma única chamada."
+            ),
+            {
+                "files": {
+                    "type": "array",
+                    "description": "Lista de arquivos a serem criados, cada um contendo 'path' e 'content'.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "Caminho completo ou relativo do arquivo.",
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "Conteúdo completo do arquivo.",
+                            },
+                        },
+                        "required": ["path", "content"],
+                    },
+                },
+            },
+            ["files"],
         ),
         (
             "write_file_chunk",
@@ -884,6 +942,7 @@ class CompatibleAgent:
         self.operation_state = OperationState()
         self._inspected_roots = set()
         self._operation_view_open = False
+        self._request_root = None
 
         self.messages = (
             messages
@@ -919,9 +978,37 @@ class CompatibleAgent:
     # CONTEXTO
     # ============================================================
 
-    def _shrink_context(self, max_chars: int = 8000):
+    def _shrink_context(self, max_chars: int = 9000):
         """Cria um payload compacto sem destruir o histórico local completo."""
-        compacted = copy.deepcopy(self.messages)
+        # Preserve more of the active conversation.  Keeping only eight
+        # messages made the model lose the original folder, file and error
+        # details during long repair sessions.
+        # Keep the beginning, the latest tool protocol messages, and recent
+        # user/assistant decisions. This prevents long tool runs from hiding
+        # the original request or the last confirmed path.
+        selected = list(self.messages[:2])
+        selected.extend(self.messages[-28:])
+        selected.extend(
+            message for message in self.messages[-80:]
+            if message.get("role") in {"user", "assistant"}
+        )
+        unique = []
+        seen = set()
+        for message in selected:
+            marker = id(message)
+            if marker not in seen:
+                seen.add(marker)
+                unique.append(message)
+        compacted = copy.deepcopy(unique)
+        if self.operation_state.event_log:
+            compacted.append({
+                "role": "system",
+                "content": (
+                    "MEMÓRIA OPERACIONAL DA TAREFA (evidências reais; não invente "
+                    "origens nem resultados):\n"
+                    + self.operation_state.context_ledger()
+                ),
+            })
         for message in compacted:
             # Só resultados de ferramentas podem ser compactados. O histórico
             # original, incluindo mensagens do usuário e respostas do agente,
@@ -931,7 +1018,7 @@ class CompatibleAgent:
             content = message.get("content")
             if not isinstance(content, str) or len(content) <= max_chars:
                 continue
-            half = max_chars // 2
+            half = max_chars * 2 // 3
             message["content"] = (
                 content[:half]
                 + "\n\n[RESULTADO COMPACTADO SÓ PARA ESTA TENTATIVA; "
@@ -939,6 +1026,46 @@ class CompatibleAgent:
                 + content[-half:]
             )
         return compacted
+
+    @staticmethod
+    def _desktop_request(text: str) -> bool:
+        normalized = text.lower().replace("á", "a").replace("ã", "a")
+        return any(term in normalized for term in (
+            "no meu desktop", "no desktop", "area de trabalho",
+            "onedrive\\desktop", "onedvire\\desktop", "onedrive/desktop",
+        ))
+
+    def _route_file_arguments(self, tool_name, arguments):
+        if not self._request_root or tool_name not in {"write_file", "write_files", "write_file_chunk", "edit_file", "read_file", "read_file_range", "inspect_project", "validate_file", "execute_file", "run_code_file", "run_terminal", "install_dependencies", "open_directory"}:
+            return arguments
+        routed = copy.deepcopy(arguments or {})
+        def route(path):
+            if not path or not isinstance(path, str):
+                return path
+            unix_alias = path.lower().replace("\\", "/")
+            if os.path.isabs(path) and not unix_alias.startswith(("/desktop", "/onedrive/desktop", "/onedrive/documents")):
+                return path
+            clean = path.strip().strip('"').replace('/', '\\')
+            if clean.startswith("~"):
+                return path
+            if clean.lower() in {"desktop", "area de trabalho"}:
+                return str(self._request_root)
+            if clean.lower().startswith(("desktop\\", "onedrive\\desktop\\")):
+                clean = clean.split('\\', 1)[1] if clean.lower().startswith("desktop\\") else clean[len("onedrive\\desktop\\"):]
+            return str(self._request_root / clean)
+        if tool_name == "write_files":
+            files = routed.get("files", [])
+            if isinstance(files, list):
+                for item in files:
+                    if isinstance(item, dict) and item.get("path"):
+                        item["path"] = route(item["path"])
+            elif isinstance(files, dict):
+                routed["files"] = {route(path): content for path, content in files.items()}
+        elif "path" in routed:
+            routed["path"] = route(routed["path"])
+        if tool_name == "run_terminal" and routed.get("cwd"):
+            routed["cwd"] = route(routed["cwd"])
+        return routed
 
     def _is_too_large(self, error) -> bool:
         """
@@ -1349,6 +1476,7 @@ class CompatibleAgent:
         quanto no paralelo.
         """
 
+        arguments = self._route_file_arguments(tool_name, arguments)
         try:
 
             if tool_name == "save_memory":
@@ -1382,6 +1510,15 @@ class CompatibleAgent:
 
             if tool_name in {"write_file", "write_file_chunk", "edit_file"}:
                 self.operation_state.record_modified(arguments.get("path", ""))
+            elif tool_name == "write_files":
+                files_payload = arguments.get("files", [])
+                if isinstance(files_payload, list):
+                    for item in files_payload:
+                        if isinstance(item, dict) and item.get("path"):
+                            self.operation_state.record_modified(item["path"])
+                elif isinstance(files_payload, dict):
+                    for p in files_payload.keys():
+                        self.operation_state.record_modified(p)
             elif tool_name in {"read_file", "read_file_range", "inspect_project"}:
                 self.operation_state.record_read(arguments.get("path", ""))
             elif tool_name == "validate_file":
@@ -1422,6 +1559,18 @@ class CompatibleAgent:
                 f"Erro ao executar "
                 f"{tool_name}: {error}"
             )
+
+    @staticmethod
+    def _tool_result_is_retryable(result) -> bool:
+        """Indica falha operacional que merece nova tentativa do modelo."""
+        if not isinstance(result, str):
+            return False
+        normalized = result.strip().lower()
+        return normalized.startswith((
+            "erro ", "[falha]", "edição não aplicada:", "ediã§ão não aplicada:",
+            "arquivo não encontrado:", "runtime '", "não há runtime",
+            "status: needs_input", "erro interno:"
+        ))
 
     def _execute_tool_calls(
         self,
@@ -1474,7 +1623,13 @@ class CompatibleAgent:
             tool_key = self._tool_call_key(call)
             self.operation_state.record_tool(call.function.name)
 
-            if tool_key in executed_tool_calls:
+            # A chamada idêntica só deve ser deduplicada quando terminou bem.
+            # Antes, a chave era adicionada antes da execução; qualquer erro
+            # (inclusive edição com contagem incorreta) deixava o agente sem
+            # permissão para corrigir os argumentos na rodada seguinte.
+            previous_result = tool_results.get(tool_key)
+            retryable_failure = self._tool_result_is_retryable(previous_result)
+            if tool_key in executed_tool_calls and not retryable_failure:
 
                 repeated_ids.add(call.id)
                 try:
@@ -1554,6 +1709,9 @@ class CompatibleAgent:
 
                     tool_results[tool_key] = result
                     results_by_id[call.id] = result
+                    self.operation_state.record_event(call.function.name, arguments_by_id.get(call.id), result)
+                    if self._tool_result_is_retryable(result):
+                        executed_tool_calls.discard(tool_key)
 
         for call, tool_key, arguments in sequential_batch:
 
@@ -1567,7 +1725,10 @@ class CompatibleAgent:
 
             tool_results[tool_key] = result
             results_by_id[call.id] = result
-
+            self.operation_state.record_event(call.function.name, arguments, result)
+            if self._tool_result_is_retryable(result):
+                # Permite que o modelo corrija a chamada na próxima rodada.
+                executed_tool_calls.discard(tool_key)
 
         # A interface mostra cada chamada uma única vez, na ordem em que o
         # modelo a pediu, mesmo quando leituras foram executadas em paralelo.
@@ -1674,6 +1835,15 @@ class CompatibleAgent:
         if cancel_event is not None and cancel_event.is_set():
             return
 
+        self._request_root = None
+        if self._desktop_request(user_message):
+            desktop = Path.home() / "OneDrive" / "Desktop"
+            if not desktop.exists():
+                desktop = Path.home() / "Desktop"
+            # "No desktop" means the actual Desktop, never a synthetic
+            # project folder derived from the user's sentence.
+            self._request_root = desktop
+
         self.messages.append(
             {
                 "role": "user",
@@ -1697,6 +1867,11 @@ class CompatibleAgent:
             MAX_TOOL_ROUNDS
         ):
 
+            # Deduplicação vale apenas para esta resposta do modelo. Em uma
+            # nova rodada o estado do projeto pode ter mudado, então buscas,
+            # testes e instalações precisam poder ser executados novamente.
+            round_executed_tool_calls = set()
+
             if cancel_event is not None and cancel_event.is_set():
                 return
 
@@ -1707,7 +1882,7 @@ class CompatibleAgent:
 
             kwargs = {
                 "model": self.model,
-                "messages": self.messages,
+                "messages": self._shrink_context(),
                 # Decidir QUAL ferramenta chamar e com quais argumentos se
                 # beneficia de menos aleatoriedade: fica mais rápido de
                 # convergir e reduz repetições/leituras desnecessárias.
@@ -1719,7 +1894,7 @@ class CompatibleAgent:
                 # escapado em JSON). 1200 tokens cortava a geração no meio
                 # da string, produzindo JSON truncado e inválido. A rodada
                 # final (sem ferramentas) continua enxuta.
-                "max_completion_tokens": 4096 if allow_tools else 1200,
+                "max_completion_tokens": 6144 if allow_tools else 1600,
             }
 
             # ========================================================
@@ -1762,7 +1937,7 @@ class CompatibleAgent:
                     )
                     self._execute_tool_calls(
                         [recovered_call],
-                        executed_tool_calls,
+                        round_executed_tool_calls,
                         cancel_event=cancel_event,
                         tool_results=tool_results,
                     )
@@ -1838,13 +2013,11 @@ class CompatibleAgent:
                         redundant_reads = False
                         break
 
-                previous_count = len(
-                    executed_tool_calls
-                )
+                previous_count = len(round_executed_tool_calls)
 
                 self._execute_tool_calls(
                     message.tool_calls,
-                    executed_tool_calls,
+                    round_executed_tool_calls,
                     cancel_event=cancel_event,
                     tool_results=tool_results,
                 )
@@ -1860,9 +2033,7 @@ class CompatibleAgent:
                     # Repetições idênticas continuam sendo interrompidas pelo
                     # teste de `current_count == previous_count` abaixo.
 
-                current_count = len(
-                    executed_tool_calls
-                )
+                current_count = len(round_executed_tool_calls)
 
                 if current_count == previous_count:
 
@@ -1948,9 +2119,9 @@ class CompatibleAgent:
 
         final_kwargs = {
             "model": self.model,
-            "messages": self.messages,
+                "messages": self._shrink_context(),
             "temperature": 0.3,
-            "max_completion_tokens": 1200,
+            "max_completion_tokens": 2000,
         }
 
         if self.model in {

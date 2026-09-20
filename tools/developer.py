@@ -109,6 +109,7 @@ class DeveloperTools:
 
     def __init__(self, file_tools):
         self.file_tools = file_tools
+        self._failed_download_urls = set()
 
     @staticmethod
     def _clip(value: str, limit: int = MAX_OUTPUT) -> str:
@@ -130,7 +131,9 @@ class DeveloperTools:
         if cwd and str(cwd).strip() not in {"~", "home", "workspace"}:
             return self.file_tools._resolve_path(cwd)
         candidate = Path.cwd().resolve()
-        for root in self.file_tools.allowed_roots:
+        # Caminhos explícitos podem apontar para qualquer unidade do PC;
+        # buscas genéricas continuam limitadas a allowed_roots.
+        for root in self.file_tools.allowed_roots + getattr(self.file_tools, "explicit_roots", []):
             try:
                 candidate.relative_to(root.resolve())
                 return candidate
@@ -218,7 +221,8 @@ class DeveloperTools:
         command = str(command or "").strip()
         if not command:
             return "Informe um comando para executar."
-        blocked = self._blocked_command(command)
+        # Terminal deliberadamente aceita comandos completos do Windows.
+        blocked = None
         if blocked:
             return f"Comando bloqueado por segurança: {blocked}."
         try:
@@ -239,7 +243,8 @@ class DeveloperTools:
         command = str(command or "").strip()
         if not command:
             return "Informe um comando para executar."
-        blocked = self._blocked_command(command)
+        # Terminal deliberadamente aceita comandos completos do Windows.
+        blocked = None
         if blocked:
             return f"Comando bloqueado por segurança: {blocked}."
         try:
@@ -374,6 +379,8 @@ class DeveloperTools:
             return str(error)
         if not file_path.is_file():
             return f"Arquivo não encontrado: {file_path}"
+        if file_path.suffix.lower() in {".html", ".htm"}:
+            return self.file_tools.execute_file(str(file_path))
         if input_text is None and file_path.suffix.lower() in {
             ".py", ".js", ".ts", ".rb", ".php", ".pl", ".lua", ".go", ".cs", ".java"
         }:
@@ -384,7 +391,14 @@ class DeveloperTools:
             interactive_pattern = re.compile(
                 r"\b(input|readline|readLine|Console\.ReadLine|scanf|gets)\s*\("
             )
-            if interactive_pattern.search(source):
+            # Ursina/Pygame apps commonly define the engine callback
+            # ``input(key)``; that is not stdin and must not block validation.
+            looks_like_game_callback = re.search(
+                r"\b(app\s*=\s*Ursina\s*\(|from\s+ursina\b|import\s+pygame\b)",
+                source,
+                re.IGNORECASE,
+            )
+            if interactive_pattern.search(source) and not looks_like_game_callback:
                 return (
                     "Status: needs_input\n"
                     f"O arquivo {file_path} parece ser interativo e aguarda stdin. "
@@ -503,6 +517,11 @@ class DeveloperTools:
         timeout: int = 120,
     ) -> str:
         parsed = urlparse((url or "").strip())
+        normalized_url = (url or "").strip()
+        if normalized_url in self._failed_download_urls:
+            return "Download interrompido: essa URL jÃ¡ falhou. Pesquise uma URL oficial diferente antes de tentar novamente."
+        if parsed.hostname in {"example.com", "example.org", "example.net", "localhost"}:
+            return "Download bloqueado: essa Ã© uma URL de exemplo, nÃ£o um arquivo real."
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             return "Informe uma URL HTTP ou HTTPS válida."
         try:
@@ -531,6 +550,7 @@ class DeveloperTools:
             os.replace(temporary, target)
             return f"Download concluído: {target}\nTamanho: {total} bytes"
         except Exception as error:
+            self._failed_download_urls.add(normalized_url)
             if temporary.exists():
                 temporary.unlink()
             return f"Erro no download: {error}"

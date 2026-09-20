@@ -12,6 +12,7 @@ class OperationState:
     last_error: str = ""
     validation_status: str = "pending"
     execution_status: str = "pending"
+    event_log: list[str] = field(default_factory=list)
 
     def reset(self, objective: str = ""):
         """Começa uma operação nova sem carregar dados da solicitação anterior."""
@@ -23,6 +24,7 @@ class OperationState:
         self.last_error = ""
         self.validation_status = "pending"
         self.execution_status = "pending"
+        self.event_log.clear()
 
     def record_tool(self, name: str):
         self.tools_used.append(name)
@@ -41,6 +43,21 @@ class OperationState:
     def record_modified(self, path: str):
         self.files_modified.add(str(Path(path)))
         self.validation_status = "pending"
+
+    def record_event(self, tool: str, arguments=None, result=None):
+        """Registra evidência curta para preservar a proveniência da tarefa."""
+        args = str(arguments or {})
+        if len(args) > 500:
+            args = args[:500] + "..."
+        text = str(result or "").replace("\n", " ")
+        if len(text) > 700:
+            text = text[:700] + "..."
+        self.event_log.append(f"{tool} | args={args} | result={text}")
+        self.event_log = self.event_log[-40:]
+
+    def context_ledger(self) -> str:
+        recent = self.event_log[-12:]
+        return "\n".join(recent) or "nenhum evento de tool registrado"
 
     def summary(self) -> str:
         read = "\n".join(f"  - {path}" for path in sorted(self.files_read)) or "  - nenhum"

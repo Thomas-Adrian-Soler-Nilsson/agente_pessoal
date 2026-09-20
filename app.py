@@ -57,10 +57,26 @@ class LocalToolExecutor:
             return self.browser.navigate(arguments.get("url", ""))
         if name == "browser_read":
             return self.browser.read(arguments.get("max_chars"))
+        if name == "browser_snapshot":
+            return self.browser.snapshot(arguments.get("max_chars"))
         if name == "browser_click":
             return self.browser.click(arguments.get("selector", ""))
         if name == "browser_fill":
             return self.browser.fill(arguments.get("selector", ""), arguments.get("value", ""))
+        if name == "browser_mouse_click":
+            return self.browser.mouse_click(arguments.get("x", 0), arguments.get("y", 0), arguments.get("button", "left"))
+        if name == "browser_mouse_move":
+            return self.browser.mouse_move(arguments.get("x", 0), arguments.get("y", 0))
+        if name == "browser_type":
+            return self.browser.type_text(arguments.get("text", ""), arguments.get("delay", 0))
+        if name == "browser_press":
+            return self.browser.press(arguments.get("key", "Enter"))
+        if name == "browser_screenshot":
+            return self.browser.screenshot(arguments.get("path", ""))
+        if name == "browser_download":
+            return self.browser.download(arguments.get("selector", ""), arguments.get("path", ""))
+        if name == "browser_search_site":
+            return self.browser.search_site(arguments.get("query", ""), arguments.get("max_pages", 5))
         if name == "list_directory":
             return self.files.list_directory(arguments.get("path", "~"))
         if name == "inspect_project":
@@ -77,6 +93,8 @@ class LocalToolExecutor:
             if "sucesso" in result.lower() and path.lower().endswith((".py", ".js", ".html", ".htm")):
                 result += "\n" + self.files.validate_file(path)
             return result
+        if name == "write_files":
+            return self.files.write_files(arguments.get("files", []))
         if name == "write_file_chunk":
             return self.files.write_file_chunk(arguments.get("path", ""), arguments.get("content", ""), arguments.get("append", True))
         if name == "edit_file":

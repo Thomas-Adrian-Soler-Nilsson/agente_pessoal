@@ -70,6 +70,15 @@ class FileTools:
         ".hs",
         ".cs",
         ".clj",
+        ".svg",
+        ".toml",
+        ".vue",
+        ".svelte",
+        ".scss",
+        ".sass",
+        ".less",
+        ".wasm",
+        ".webmanifest",
     }
 
     def __init__(self):
@@ -81,7 +90,16 @@ class FileTools:
             home / "Documents",
             home / "Downloads",
             home / "OneDrive",
+            Path.cwd(),
         ]
+        # Usado somente para caminhos explícitos informados pelo usuário.
+        # Não entra nas buscas genéricas, que continuam limitadas a
+        # allowed_roots para evitar varrer o computador inteiro.
+        self.explicit_roots = [Path(home.anchor)]
+        for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            drive = Path(f"{letter}:\\")
+            if drive.exists() and drive not in self.explicit_roots:
+                self.explicit_roots.append(drive)
 
         self.skip_dir_names = {
             ".git",
@@ -89,6 +107,9 @@ class FileTools:
             "__pycache__",
             ".venv",
             ".venv-1",
+            "venv",
+            "env",
+            ".tox",
             "dist",
             "build",
             ".mypy_cache",
@@ -115,8 +136,17 @@ class FileTools:
             "/",
             "\\",
         )
+        # Modelos frequentemente enviam aliases Unix-like, por exemplo
+        # /onedrive/desktop/projeto. No Windows isso não é um caminho absoluto
+        # real; é apenas outra forma de dizer OneDrive\\Desktop.
+        alias_normalized = normalized.lstrip("\\")
 
         home = Path.home()
+
+        onedrive_desktop = home / "OneDrive" / "Desktop"
+        default_desktop = onedrive_desktop if onedrive_desktop.exists() else (home / "Desktop")
+        onedrive_docs = home / "OneDrive" / "Documents"
+        default_docs = onedrive_docs if onedrive_docs.exists() else (home / "Documents")
 
         aliases = {
             "downloads": home / "Downloads",
@@ -139,10 +169,21 @@ class FileTools:
             "unidrive": home / "OneDrive",
             "anidrive": home / "OneDrive",
             "anidriving": home / "OneDrive",
+            "desktop": default_desktop,
+            "area de trabalho": default_desktop,
+            "area de trabalho\\": default_desktop,
+            "onedrive\\desktop": default_desktop,
+            "documents": default_docs,
+            "documentos": default_docs,
+            "meus documentos": default_docs,
+            "onedrive\\documents": default_docs,
+            "workspace": Path.cwd(),
+            ".": Path.cwd(),
+            ".\\": Path.cwd(),
         }
 
         alias = self._normalize_text(
-            normalized.strip("\\")
+            alias_normalized.strip("\\")
         )
 
         for alias_name, alias_root in sorted(
@@ -164,7 +205,7 @@ class FileTools:
 
                 value = str(
                     alias_root
-                    / normalized[
+                    / alias_normalized[
                         len(prefix):
                     ]
                 )
@@ -177,7 +218,7 @@ class FileTools:
             .resolve()
         )
 
-        for root in self.allowed_roots:
+        for root in self.allowed_roots + self.explicit_roots:
 
             try:
 
@@ -823,6 +864,21 @@ class FileTools:
     # ESCREVER / CRIAR ARQUIVO
     # ==========================================================
 
+    @staticmethod
+    def _clean_code_content(content: str, suffix: str = "") -> str:
+        """Remove invólucros acidentais de blocos markdown (ex: ```html ... ```) comuns em LLMs."""
+        if not isinstance(content, str):
+            return ""
+        text = content.strip()
+        if text.startswith("```") and text.endswith("```"):
+            lines = text.splitlines()
+            if len(lines) >= 2 and lines[0].strip().startswith("```"):
+                lang = lines[0].strip().lstrip("`").lower()
+                if suffix in {".md", ".txt"} and lang in {"", "md", "markdown"}:
+                    return content
+                return "\n".join(lines[1:-1]).strip() + "\n"
+        return content
+
     def write_file(
         self,
         path: str,
@@ -841,6 +897,8 @@ class FileTools:
         if content is None:
             return "O conteúdo do arquivo não foi informado."
 
+        content_to_write = self._clean_code_content(str(content), file_path.suffix.lower())
+
         try:
             file_path.parent.mkdir(
                 parents=True,
@@ -858,13 +916,15 @@ class FileTools:
             temporary_path = Path(temporary.name)
             try:
                 with temporary:
-                    temporary.write(str(content))
+                    temporary.write(content_to_write)
                 os.replace(temporary_path, file_path)
             finally:
                 if temporary_path.exists():
                     temporary_path.unlink()
 
-            if file_path.read_text(encoding="utf-8") != str(content):
+            expected_normalized = content_to_write.replace("\r\n", "\n").strip()
+            actual_normalized = file_path.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n").strip()
+            if actual_normalized != expected_normalized:
                 return "Erro: o arquivo foi escrito, mas a verificação falhou."
 
             return (
@@ -877,6 +937,51 @@ class FileTools:
             return (
                 f"Erro ao escrever arquivo: {error}"
             )
+
+    def write_files(
+        self,
+        files: list[dict] | dict,
+    ) -> str:
+        """Cria ou atualiza múltiplos arquivos de uma vez.
+        
+        Aceita uma lista de objetos com 'path' e 'content', ou um dicionário {path: content}.
+        Ideal para criar aplicativos e scaffolds completos sem interrupções.
+        """
+        if not files:
+            return "Nenhum arquivo informado para criação."
+
+        items = []
+        if isinstance(files, dict):
+            items = [{"path": p, "content": c} for p, c in files.items()]
+        elif isinstance(files, list):
+            items = files
+        else:
+            return "Formato inválido para write_files. Envie uma lista de objetos ou um dicionário."
+
+        results = []
+        success_count = 0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path") or item.get("file") or item.get("name")
+            content = item.get("content") or item.get("code") or item.get("text", "")
+            if not path:
+                results.append("[FALHA] Caminho não especificado para um dos arquivos.")
+                continue
+            res = self.write_file(str(path), str(content))
+            if "sucesso" in res.lower():
+                success_count += 1
+                try:
+                    resolved = self._resolve_path(str(path))
+                    size = resolved.stat().st_size
+                except Exception:
+                    size = len(str(content))
+                results.append(f"[OK] {path} ({size} bytes)")
+            else:
+                results.append(f"[FALHA] {path}: {res}")
+
+        summary = f"write_files: {success_count}/{len(items)} arquivos criados com sucesso.\n" + "\n".join(results)
+        return summary
 
     def write_file_chunk(
         self,

@@ -152,6 +152,11 @@ class ComputerTools:
         if not value:
             return "Informe qual pasta devo abrir."
         aliases = {
+            "desktop": os.path.join(os.path.expanduser("~"), "Desktop"),
+            "area de trabalho": os.path.join(os.path.expanduser("~"), "Desktop"),
+            "onedrive\\desktop": os.path.join(os.path.expanduser("~"), "OneDrive", "Desktop"),
+            "unidrive\\desktop": os.path.join(os.path.expanduser("~"), "OneDrive", "Desktop"),
+            "anidrive\\desktop": os.path.join(os.path.expanduser("~"), "OneDrive", "Desktop"),
             "downloads": os.path.join(os.path.expanduser("~"), "Downloads"),
             "download": os.path.join(os.path.expanduser("~"), "Downloads"),
             "meus downloads": os.path.join(os.path.expanduser("~"), "Downloads"),
@@ -165,7 +170,7 @@ class ComputerTools:
             "anidrive": os.path.join(os.path.expanduser("~"), "OneDrive"),
             "anidriving": os.path.join(os.path.expanduser("~"), "OneDrive"),
         }
-        alias = self._normalize_name(value.replace("/", "\\").strip("\\"))
+        alias = self._normalize_name(value.replace("/", "\\").lstrip("\\").strip("\\"))
         directory = aliases.get(alias, value)
         if not os.path.isdir(directory):
             return f"A pasta '{path}' não existe ou não está disponível."
