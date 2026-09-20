@@ -199,6 +199,9 @@ def deep_search(query, max_sites=7, max_chars_per_site=3000):
     for i, (url, (title, text)) in enumerate(contents.items(), start=1):
         parts.append(f"--- Fonte {i}: {title} ({url}) ---\n{text}\n")
 
+    return "\n".join(parts)
+
+
 import requests as _requests_lib
 
 

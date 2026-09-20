@@ -210,9 +210,6 @@ def chat_response(text: str) -> None:
         text,
         flags=re.IGNORECASE,
     )
-    # Alguns terminais Windows não quebram corretamente uma linha única
-    # dentro de um renderizável Markdown. Fazemos a quebra antes do Rich,
-    # preservando blocos de código e listas.
     width = max(40, console.width - 8)
     wrapped_lines = []
     in_code = False
@@ -231,8 +228,6 @@ def chat_response(text: str) -> None:
                 replace_whitespace=False,
             ) or [""])
     text = "\n".join(wrapped_lines)
-    # Markdown deixa listas, títulos e blocos de código legíveis sem
-    # quebrar a resposta em uma única linha no CMD.
     console.print(
         Panel(
             Markdown(text),
@@ -244,16 +239,22 @@ def chat_response(text: str) -> None:
     )
 
 
-def chat_tool(name: str, repeated: bool = False) -> None:
+def chat_tool(
+    name: str,
+    repeated: bool = False,
+    arguments: dict | None = None,
+    result: object = None,
+) -> None:
+    """Compat wrapper used by the agent execution flow."""
     if repeated:
         console.print(
             f"\n[warn]↻ Ferramenta repetida ignorada:[/warn] [muted]{name}()[/muted]"
         )
         return
-
-    console.print(
-        f"\n[info]⚙ IA →[/info] [accent]{name}()[/accent]"
-    )
+    if arguments is not None or result is not None:
+        chat_tool_card(name, repeated=repeated, arguments=arguments, result=result)
+        return
+    console.print(f"\n[info]⚙ IA →[/info] [accent]{name}()[/accent]")
 
 
 def chat_notice(message: str) -> None:
@@ -262,9 +263,6 @@ def chat_notice(message: str) -> None:
 
 def interrupted() -> None:
     console.print("\n[warn]🛑 Interrompido.[/warn]")
-
-
-
 
 
 def prompt(message: str) -> str:
@@ -358,7 +356,7 @@ def chat_operation_header(objective: str) -> None:
     )
 
 
-def chat_tool(
+def chat_tool_card(
     name: str,
     repeated: bool = False,
     arguments: dict | None = None,
@@ -437,25 +435,5 @@ def chat_operation_summary(summary: str) -> None:
 
 # Compatibilidade com o CMD legado do Windows: estes prefixos não dependem
 # de emojis nem de caracteres que cp1252 não consegue imprimir.
-def ok(message: str) -> None:
-    console.print(f"[ok][OK][/ok] {message}")
-
-
-def warn(message: str) -> None:
-    console.print(f"[warn][WARN][/warn] {message}")
-
-
-def error(message: str) -> None:
-    console.print(f"[error][ERROR][/error] {message}")
-
-
-def info(message: str) -> None:
-    console.print(f"[info][INFO][/info] {message}")
-
-
-def chat_notice(message: str) -> None:
-    console.print(f"\n[warn][NOTICE][/warn] {message}")
-
-
-def interrupted() -> None:
-    console.print("\n[warn][STOP] Interrompido.[/warn]")
+# A implementação final da UI é mantida acima para evitar sobreposição
+# duplicada e erros de análise de tipos do Pyright.

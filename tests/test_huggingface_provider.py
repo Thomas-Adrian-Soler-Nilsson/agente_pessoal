@@ -65,10 +65,69 @@ class HuggingFaceProviderTests(unittest.TestCase):
 
             client = client_holder["client"]
             args, kwargs = client.calls[0]
-            self.assertEqual(args[0], "uma cadeira")
-            self.assertEqual(args[1], str(source))
+            self.assertEqual(args, ())
+            self.assertEqual(kwargs["prompt"], "uma cadeira")
+            self.assertEqual(kwargs["image"], str(source))
             self.assertEqual(kwargs["api_name"], "/generation_all")
             self.assertIn(".glb", result)
+
+    @patch.dict(os.environ, {"HF_TOKEN": "test-token", "HF_3D_MODEL": "demo/space-one,demo/space-two"}, clear=False)
+    def test_generate_3d_retries_next_model_when_first_space_fails(self):
+        from tools import huggingface_multimodal as multimodal
+
+        class FakeClient:
+            def __init__(self, space, token):
+                self.space = space
+                self.token = token
+                self.calls = []
+
+            def predict(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+                if self.space == "demo/space-one":
+                    raise RuntimeError("down")
+                return {"mesh": self.mesh}
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "mesh.glb"
+            source.write_bytes(b"glb")
+            clients = []
+
+            def make_client(space, token):
+                client = FakeClient(space, token)
+                client.mesh = source
+                clients.append(client)
+                return client
+
+            with patch("gradio_client.Client", side_effect=make_client), patch(
+                "gradio_client.handle_file", side_effect=lambda value: value
+            ), patch.object(multimodal, "OUTPUT_ROOT", Path(directory) / "output"):
+                result = multimodal.generate_3d("uma cadeira")
+
+            self.assertEqual(len(clients), 2)
+            self.assertEqual(clients[0].space, "demo/space-one")
+            self.assertEqual(clients[1].space, "demo/space-two")
+            self.assertIn(".glb", result)
+
+    @patch.dict(os.environ, {"HF_TOKEN": "test-token"}, clear=False)
+    def test_generate_3d_falls_back_to_hand_mesh_for_fps_prompt_when_spaces_fail(self):
+        from tools import huggingface_multimodal as multimodal
+
+        class FakeClient:
+            def __init__(self, space, token):
+                self.space = space
+                self.token = token
+
+            def predict(self, *args, **kwargs):
+                raise RuntimeError("space unavailable")
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("gradio_client.Client", side_effect=FakeClient), patch(
+                "gradio_client.handle_file", side_effect=lambda value: value
+            ), patch.object(multimodal, "OUTPUT_ROOT", Path(directory) / "output"):
+                result = multimodal.generate_3d("mão de fps com arma")
+
+            self.assertIn("fallback", result.lower())
+            self.assertTrue(any(Path(directory).glob("**/*.obj")))
 
     @patch.dict(os.environ, {"TRIPOSR_DEVICE": "cpu", "TRIPOSR_TIMEOUT": "30"}, clear=False)
     def test_local_triposr_backend_runs_official_script_and_copies_glb(self):
