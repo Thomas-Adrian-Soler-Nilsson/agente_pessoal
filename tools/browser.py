@@ -1,11 +1,21 @@
 """Chrome session browser tools backed by the local extension bridge."""
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
 from tools.browser_bridge import acquire_shared_browser_bridge, release_shared_browser_bridge
 from tools.browser_protocol import result
+
+
+def confirmar_acoes_arriscadas() -> bool:
+    """Pedir [s/N] antes de enviar, publicar, comprar ou excluir?
+
+    Desligado por padrao: o agente executa direto. Com
+    AGENTE_CONFIRMAR_ACOES=1 a confirmacao volta a ser pedida.
+    """
+    return os.getenv("AGENTE_CONFIRMAR_ACOES", "").strip().lower() in {"1", "true", "sim", "yes", "on"}
 
 
 class BrowserTools:
@@ -41,7 +51,13 @@ class BrowserTools:
         return self._call("select", {"tab_id": int(tab_id), "element_ref": element_ref, "value": str(value or "")})
 
     def press(self, tab_id, key):
-        return self._call("press", {"tab_id": int(tab_id), "key": key})
+        return self._call("press", {
+            "tab_id": int(tab_id),
+            "key": key,
+            # Sem confirmacao configurada, o Enter tambem nao pode ser barrado
+            # pelo guard de "submit" da extensao.
+            "allow_submit": not confirmar_acoes_arriscadas(),
+        })
 
     def wait(self, tab_id, text="", url_contains="", timeout=10):
         return self._call("wait", {"tab_id": int(tab_id), "text": text, "url_contains": url_contains, "timeout": timeout}, timeout=float(timeout) + 5)

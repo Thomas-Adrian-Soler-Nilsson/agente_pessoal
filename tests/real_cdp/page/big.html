@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><title>Página grande para screenshot</title></head>
+<body style="margin:0">
+<canvas id="ruido" width="1600" height="1200"></canvas>
+<div id="texto" style="position:absolute;top:1210px;left:0;max-width:1600px"></div>
+<script>
+  // Ruído puro = pior caso para JPEG; garante que o loop de qualidade
+  // precise reduzir de 65 até o piso para caber em 700.000 caracteres.
+  var c = document.getElementById("ruido");
+  var ctx = c.getContext("2d");
+  var img = ctx.createImageData(c.width, c.height);
+  var seed = 123456789;
+  function rnd() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
+  for (var i = 0; i < img.data.length; i += 4) {
+    img.data[i] = rnd() * 256; img.data[i + 1] = rnd() * 256; img.data[i + 2] = rnd() * 256; img.data[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  var paragrafos = [];
+  for (var p = 0; p < 200; p++) paragrafos.push("<p>Linha " + p + " de texto denso para deixar o DOM pesado.</p>");
+  document.getElementById("texto").innerHTML = paragrafos.join("");
+</script>
+</body>
+</html>

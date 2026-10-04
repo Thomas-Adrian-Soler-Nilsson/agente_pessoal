@@ -11,7 +11,7 @@ from providers.router import ProviderRouter
 from providers.huggingface_catalog import available_models as hf_models
 from screen.screen import Screen
 from tools.computer import ComputerTools
-from tools.browser import BrowserTools
+from tools.browser import BrowserTools, confirmar_acoes_arriscadas
 from tools.developer import DeveloperTools
 from tools.files import FileTools
 from tools.image_generation import ImageGenerator
@@ -26,6 +26,11 @@ from tools.web_research import discover_sources, open_public_page, deep_search a
 
 Avatar = None
 load_dotenv()
+
+# Enquanto uma pergunta [s/N] estiver na thread da resposta, a thread principal
+# precisa parar de consumir teclas (msvcrt), senão as duas disputam o teclado e a
+# resposta do usuário se perde.
+INPUT_PAUSE = threading.Event()
 
 
 class LocalToolExecutor:
@@ -44,7 +49,25 @@ class LocalToolExecutor:
             return outcome
         data = outcome.get("data") or {}
         label = data.get("label", "ação externa")
-        answer = ui.prompt(f"O Chrome vai executar '{label}'. Autorizar? [s/N]: ").strip().lower()
+        if not confirmar_acoes_arriscadas():
+            # Sem confirmacao configurada: segue direto com o token que a
+            # extensao devolveu, sem interromper o usuario.
+            aprovado = retry(data.get("confirmation_token", ""))
+            if isinstance(aprovado, dict) and aprovado.get("status") == "confirmation_required":
+                # Defensivo: se o token nao for aceito, falha com codigo claro em
+                # vez de devolver "aguarda confirmacao" e deixar o modelo repetir.
+                return {
+                    **aprovado,
+                    "status": "failure",
+                    "error_code": "confirmation_not_accepted",
+                    "observation": "A extensão não aceitou a autorização automática; nada foi executado.",
+                }
+            return aprovado
+        INPUT_PAUSE.set()
+        try:
+            answer = ui.prompt(f"O Chrome vai executar '{label}'. Autorizar? [s/N]: ").strip().lower()
+        finally:
+            INPUT_PAUSE.clear()
         if answer not in {"s", "sim", "y", "yes"}:
             return {**outcome, "status": "failure", "error_code": "user_denied", "observation": "Ação cancelada pelo usuário; nada foi enviado."}
         return retry(data.get("confirmation_token", ""))
@@ -84,38 +107,8 @@ class LocalToolExecutor:
             outcome = self.browser.click(arguments.get("tab_id"), arguments.get("element_ref", ""))
             return self._confirm_browser_outcome(outcome, lambda token: self.browser.click(arguments.get("tab_id"), arguments.get("element_ref", ""), token))
         if name == "browser_visual_click":
-            tab_id = arguments.get("tab_id")
-            goal = arguments.get("goal", "")
-            # Step 1: Capture screenshot (triggers automatic VisionAgent analysis via _prepare_tool_result in compatible_agent.py)
-            screenshot_outcome = self.browser.screenshot(tab_id)
-            if screenshot_outcome.get("status") != "success":
-                return screenshot_outcome
-            # Step 2: Get vision analysis targets with coordinates (auto-detected by AI)
-            analysis = screenshot_outcome.get("analysis", {})
-            targets = analysis.get("targets", [])
-            if not targets:
-                # Fallback: inspect to get element_ref if no vision targets found
-                inspect_outcome = self.browser.inspect(tab_id, 12000)
-                if inspect_outcome.get("status") != "success":
-                    return inspect_outcome
-                element_ref = inspect_outcome.get("data", {}).get("element_ref", "")
-                if not element_ref:
-                    return {"status": "failure", "error_code": "no_element_ref", "observation": "Nenhum elemento inspecionado encontrado após análise visual."}
-                # Click with element_ref (tries native clickable element)
-                click_outcome = self.browser.click(tab_id, element_ref)
-                return self._confirm_browser_outcome(click_outcome, lambda token: self.browser.click(tab_id, element_ref, token))
-            # Step 3: Use the best target's coordinates for click_at (works for ANY element type: <img>, <div>, <button>, etc.)
-            best = targets[0]
-            x = best.get("x", 0)
-            y = best.get("y", 0)
-            confidence = best.get("confidence", 0)
-            screenshot_id = screenshot_outcome.get("screenshot_id", "")
-            if not screenshot_id:
-                return {"status": "failure", "error_code": "no_screenshot_id", "observation": "ID do screenshot não disponível."}
-            # Click at coordinates - this works for icons, images, divs, buttons, etc.
-            expected_label = str(best.get("label", ""))
-            click_outcome = self.browser.click_at(tab_id, screenshot_id, x, y, expected_label=expected_label)
-            return self._confirm_browser_outcome(click_outcome, lambda token: self.browser.click_at(tab_id, screenshot_id, x, y, token, expected_label))
+            return {"status": "failure", "error_code": "handled_by_agent",
+                    "observation": "browser_visual_click é tratado pelo agente, não pelo executor."}
         if name == "browser_click_at":
             tab_id = arguments.get("tab_id")
             screenshot_id = arguments.get("screenshot_id", "")
@@ -236,9 +229,13 @@ class LocalToolExecutor:
             # Download e uma acao externa: pede autorizacao pontual, sem
             # transformar edicoes locais e testes em confirmacoes repetitivas.
             try:
-                answer = input(
-                    f"\nAutorizar download para '{path}'? [s/N]: "
-                ).strip().lower()
+                INPUT_PAUSE.set()
+                try:
+                    answer = input(
+                        f"\nAutorizar download para '{path}'? [s/N]: "
+                    ).strip().lower()
+                finally:
+                    INPUT_PAUSE.clear()
             except (EOFError, KeyboardInterrupt):
                 answer = ""
             if answer not in {"s", "sim", "y", "yes"}:
@@ -335,6 +332,9 @@ def _wait_for_response_or_escape(response_thread, cancel_event, stop_speech, rea
     skip_extended_key = False
 
     while response_thread.is_alive():
+        if INPUT_PAUSE.is_set():
+            response_thread.join(timeout=0.05)
+            continue
         key = read_key()
         while key is not None:
             if skip_extended_key:
@@ -570,6 +570,113 @@ def menu():
     return base
 
 
+# --------------------------------------------------------------- modo autonomo
+LOOP_MAX_ROUNDS = 50
+LOOP_DEFAULT_ROUNDS = 5
+GOAL_DEFAULT_ROUNDS = 10
+LOOP_OFF_WORDS = {"off", "parar", "stop", "0", "desligar", "limpar"}
+LOOP_DONE_MARKERS = (
+    "objetivo concluído",
+    "objetivo concluido",
+    "tarefa concluída",
+    "tarefa concluida",
+    "nada mais a fazer",
+)
+
+
+def _normalize_slash_command(text):
+    """Separa o comando slash do parametro. Devolve ("", "") se nao for comando."""
+    stripped = str(text or "").strip()
+    if not stripped.startswith("/"):
+        return "", ""
+    command, _, parameter = stripped.partition(" ")
+    return command.lower(), parameter.strip()
+
+
+def _loop_rounds(parameter, default):
+    """Le o numero de rodadas. Devolve None quando o valor e invalido."""
+    value = str(parameter or "").strip().lower()
+    if not value:
+        return default
+    if value in LOOP_OFF_WORDS:
+        return 0
+    try:
+        number = int(value)
+    except ValueError:
+        return None
+    return max(1, min(number, LOOP_MAX_ROUNDS))
+
+
+def _autonomous_command(text):
+    """Interpreta /loop e /goal.
+
+    Devolve None quando nao e um desses comandos; caso contrario devolve
+    {"goal": str|None, "rounds": int|None, "message": str}, onde None significa
+    "nao mexer no que ja estava configurado" e "" significa "limpar".
+    """
+    command, parameter = _normalize_slash_command(text)
+    if command not in {"/loop", "/meta", "/goal"}:
+        return None
+
+    if command in {"/loop", "/meta"}:
+        rounds = _loop_rounds(parameter, LOOP_DEFAULT_ROUNDS)
+        if rounds is None:
+            return {"goal": None, "rounds": None,
+                    "message": f"Use /loop [1-{LOOP_MAX_ROUNDS}] ou /loop off."}
+        if rounds == 0:
+            return {"goal": "", "rounds": 0, "message": "Modo autonomo desligado."}
+        # goal=None: /loop nao pode apagar um objetivo em andamento.
+        return {"goal": None, "rounds": rounds,
+                "message": f"Modo autonomo ligado por {rounds} rodada(s). Esc interrompe."}
+
+    if parameter.lower() in LOOP_OFF_WORDS:
+        return {"goal": "", "rounds": 0, "message": "Objetivo removido; modo autonomo desligado."}
+    if not parameter:
+        return {"goal": None, "rounds": None,
+                "message": "Use /goal <objetivo> para o agente trabalhar sozinho, ou /goal off para encerrar."}
+    return {"goal": parameter, "rounds": GOAL_DEFAULT_ROUNDS,
+            "message": f'Objetivo definido: "{parameter[:120]}". Vou trabalhar nele sozinho por ate '
+                       f"{GOAL_DEFAULT_ROUNDS} rodadas; Esc interrompe."}
+
+
+def _loop_continuation(goal, round_number, total_rounds):
+    """Instrucao enviada automaticamente entre as rodadas do modo autonomo."""
+    common = (
+        f" (rodada automatica {round_number} de {total_rounds}; use as ferramentas e "
+        "nao pare para pedir confirmacao a cada passo)"
+    )
+    if goal:
+        return (
+            "Continue trabalhando sozinho no objetivo abaixo, aproveitando o que ja foi feito "
+            "e sem repetir acoes ja concluidas." + common + "\n\nObjetivo: " + goal +
+            "\n\nQuando o objetivo estiver realmente concluido, comece a resposta com "
+            '"OBJETIVO CONCLUÍDO" e resuma em uma linha o que foi feito.'
+        )
+    return (
+        "Continue a tarefa anterior a partir do estado atual, sem repetir o que ja foi feito."
+        + common +
+        '\n\nSe nao houver mais nada util a fazer, comece a resposta com "TAREFA CONCLUÍDA".'
+    )
+
+
+def _loop_finished(answer):
+    """O agente declarou que terminou?"""
+    text = str(answer or "").lower()
+    return any(marker in text for marker in LOOP_DONE_MARKERS)
+
+
+def _command_help():
+    return (
+        "/voz — falar pelo microfone\n"
+        f"/loop [n] — o agente continua sozinho por n rodadas (padrao {LOOP_DEFAULT_ROUNDS}, max {LOOP_MAX_ROUNDS})\n"
+        "/loop off — encerra o modo autonomo\n"
+        f"/goal <objetivo> — define o objetivo e ja comeca a trabalhar nele sozinho ({GOAL_DEFAULT_ROUNDS} rodadas)\n"
+        "/goal off — remove o objetivo e encerra o modo autonomo\n"
+        "/verboso — alterna entre o resumo legivel e o JSON completo das acoes\n"
+        "Esc — interrompe o raciocinio e o modo autonomo"
+    )
+
+
 def run_text_provider(provider_name, agent, stt_provider, tts_provider, fish_voice_id=None, avatar=None):
     from audio.microphone import Microphone
     from audio.speech_to_text import SpeechToText
@@ -580,7 +687,7 @@ def run_text_provider(provider_name, agent, stt_provider, tts_provider, fish_voi
     if tts_provider == "fish" and fish_voice_id:
         agent.set_personality(fish_voice_personality(fish_voice_id))
     ui.module_header(provider_name, icon="💬")
-    ui.ok("Pronto. Digite no CMD. Use /voz para falar pelo microfone.")
+    ui.ok("Pronto. Digite no CMD. Use /voz para falar, /loop ou /goal para ele seguir sozinho, /ajuda para ver tudo.")
     recent_context = []
     response_thread = None
     speech_thread = None
@@ -589,6 +696,14 @@ def run_text_provider(provider_name, agent, stt_provider, tts_provider, fish_voi
     response_lock = threading.Lock()
     agent_lock = threading.Lock()
     response_id = 0
+    # Estado do modo autonomo (/loop e /goal): loop_round conta as rodadas
+    # automaticas ja disparadas e loop_total o limite permitido.
+    loop_goal = ""
+    loop_armed = False
+    loop_round = 0
+    loop_total = 0
+    auto_prompt = ""
+    last_answer = {"text": ""}
 
     def process_message(text, current_response_id, cancel_event):
         nonlocal response_thread, speech_thread
@@ -604,6 +719,8 @@ def run_text_provider(provider_name, agent, stt_provider, tts_provider, fish_voi
             if avatar and not cancel_event.is_set(): avatar.speaking()
             spoken = "".join(agent.ask_stream(text, cancel_event=cancel_event))
             if cancel_event.is_set(): return
+            # Guardado para o modo autonomo saber se o agente declarou conclusao.
+            last_answer["text"] = spoken
             # O texto exibido deve preservar Markdown e quebras de linha.
             # _speech_text() é específico do TTS: ele remove URLs, tags e
             # formatação para a fala e também achata as linhas. Usá-lo aqui
@@ -629,9 +746,43 @@ def run_text_provider(provider_name, agent, stt_provider, tts_provider, fish_voi
     try:
         while True:
             if avatar: avatar.idle()
-            text = _chat_prompt(default=pending_prompt).strip()
-            pending_prompt = ""
+            if auto_prompt and not pending_prompt:
+                # Rodada automatica do modo autonomo: nao passa pelo prompt.
+                text = auto_prompt
+                auto_prompt = ""
+                ui.console.print(f"[user]Você[/user] [muted]›[/muted] {text}")
+            else:
+                text = _chat_prompt(default=pending_prompt).strip()
+                pending_prompt = ""
+                # Texto digitado pelo usuario durante a resposta manda: a rodada
+                # automatica pendente e descartada para nao atropelar quem digitou.
+                auto_prompt = ""
             if not text: continue
+            comando_slash = _normalize_slash_command(text)[0]
+            if comando_slash in {"/ajuda", "/help", "/comandos", "/?"}:
+                ui.info(_command_help())
+                continue
+            if comando_slash == "/verboso":
+                ligado = ui.set_verbose(not ui.verbose())
+                ui.info("Modo verboso LIGADO: mostrando o JSON completo das acoes."
+                        if ligado else
+                        "Modo verboso DESLIGADO: mostrando o resumo legivel das acoes.")
+                continue
+            autonomo = _autonomous_command(text)
+            if autonomo is not None:
+                if autonomo["goal"] is not None:
+                    loop_goal = autonomo["goal"]
+                if autonomo["rounds"] is not None:
+                    loop_total = autonomo["rounds"]
+                    loop_round = 0
+                    loop_armed = bool(autonomo["rounds"])
+                ui.info(autonomo["message"])
+                if loop_goal:
+                    # "/goal <objetivo>" ja comeca a trabalhar: a meta e o pedido.
+                    text = loop_goal
+                    ui.console.print(f"[user]Você[/user] [muted]›[/muted] {text}")
+                else:
+                    continue
             if text.lower() in {"/voz", "voz", "/voice"}:
                 with response_lock:
                     response_id += 1
@@ -677,6 +828,23 @@ def run_text_provider(provider_name, agent, stt_provider, tts_provider, fish_voi
             )
             if interrupted:
                 ui.warn("Raciocínio interrompido.")
+                if loop_armed:
+                    ui.warn("Modo autônomo encerrado.")
+                    loop_armed = False
+                    loop_goal = ""
+            elif loop_armed:
+                if _loop_finished(last_answer["text"]):
+                    ui.ok("O agente declarou a tarefa concluída; modo autônomo encerrado.")
+                    loop_armed = False
+                    loop_goal = ""
+                elif loop_round < loop_total:
+                    loop_round += 1
+                    auto_prompt = _loop_continuation(loop_goal, loop_round, loop_total)
+                    ui.info(f"↻ Rodada automática {loop_round}/{loop_total} (Esc interrompe)")
+                else:
+                    ui.warn(f"Modo autônomo encerrado: limite de {loop_total} rodadas atingido.")
+                    loop_armed = False
+                    loop_goal = ""
     except KeyboardInterrupt:
         ui.console.print(); ui.warn("Encerrando...")
     finally:

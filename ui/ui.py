@@ -4,8 +4,11 @@ Centraliza o console, o tema de cores e os widgets (paineis, tabelas,
 spinners) usados pelo app.py e pelos modulos de audio/providers/memoria,
 para manter uma identidade visual consistente no terminal.
 
-Visual: arco-iris animado (banner, reguas, "pensando...") e borda das
-respostas trocando de cor a cada mensagem.
+Visual: tema vermelho moderno. O gradiente da familia do vermelho percorre o
+banner, as reguas e o indicador "pensando...", e a borda das respostas troca de
+paleta (vermelho, rosa, carmesim, framboesa, brasa, tijolo) a cada mensagem.
+Os estados continuam diferenciados: sucesso em rosa claro, falha em vermelho
+profundo reverso, aviso em ambar.
 """
 
 from __future__ import annotations
@@ -13,13 +16,14 @@ from __future__ import annotations
 import colorsys
 import itertools
 import json
+import math
+import os
 import re
 import sys
 import time
 from contextlib import contextmanager
 
 from rich import box
-from rich.align import Align
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
@@ -41,39 +45,61 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 
+# Paleta da CLI: esquema convencional e organizado, uma cor por papel. O vermelho
+# fica reservado para FALHA (e para a coruja, que e' a identidade do agente).
+#   marca/ chrome = azul      (reguas, molduras, titulos)
+#   sucesso       = verde
+#   aviso         = ambar
+#   falha         = vermelho
+#   informacao    = azul claro
+#   agente        = violeta calmo
+#   secundario    = cinza
 THEME = Theme(
     {
-        "brand": "bold #22D3EE",
-        "muted": "grey62",
+        "brand": "bold #38BDF8",
+        "muted": "#9CA3AF",
         "ok": "bold #4ADE80",
-        "warn": "bold #FACC15",
+        "warn": "bold #FBBF24",
         "error": "bold #F87171",
-        "info": "bold #38BDF8",
-        "user": "bold #38BDF8",
-        "agent": "bold #F472B6",
-        "accent": "bold white",
+        "info": "bold #7DD3FC",
+        "user": "bold #7DD3FC",
+        "agent": "bold #C4B5FD",
+        "accent": "bold #F1F5F9",
     }
 )
 
 console = Console(theme=THEME, highlight=False, soft_wrap=True)
 
-ROBOT_ART = [
-    "  ╭──────╮",
-    "  │ ◉  ◉ │",
-    "  │  ──  │",
-    "  ╰┬────┬╯",
-    "   │    │",
+
+OWL_ART = [
+    "     ▄▄▄▄     ▄▄▄▄",
+    "   ▄██████▄▄▄██████▄",
+    "  ████▀▀▀▀▀▀▀▀▀████",
+    "  ██  ▄▄▄▄  ▄▄▄▄  ██",
+    "  ██  █◉◉█  █◉◉█  ██",
+    "  ██  ▀▀▀█▄▄█▀▀▀  ██",
+    "  ████▄▄▄▄▄▄▄▄▄████",
+    "   ███████████████",
+    "    ▀▀▀▀     ▀▀▀▀",
 ]
 
-# Cores que se alternam na borda das respostas (uma por mensagem).
+# Com soft_wrap=True o rich NAO corta linhas maiores que o terminal: numa janela
+# minimizada (largura minima) cada quadro da animacao quebra em varias linhas
+# visuais, o Live perde a conta e o logo aparece repetido na tela. Por isso a
+# animacao exige tamanho minimo e para sozinha se a janela for redimensionada.
+BANNER_MIN_WIDTH = 40
+BANNER_MIN_HEIGHT = len(OWL_ART) + 5
+
+# Paletas que se alternam na borda das respostas (uma por mensagem). Tons frios e
+# calmos, para a CLI ficar organizada e ainda assim dar para distinguir uma
+# mensagem da outra. As cores quentes ficam reservadas para os estados.
 BORDER_COLORS = [
-    "#F472B6",  # rosa
-    "#FB923C",  # laranja
-    "#FACC15",  # amarelo
-    "#4ADE80",  # verde
-    "#22D3EE",  # ciano
-    "#60A5FA",  # azul
-    "#F87171",  # vermelho
+    "#38BDF8",  # azul
+    "#7DD3FC",  # azul claro
+    "#A78BFA",  # violeta
+    "#5EEAD4",  # agua
+    "#818CF8",  # indigo
+    "#93C5FD",  # azul suave
 ]
 _border_cycle = itertools.cycle(BORDER_COLORS)
 
@@ -83,45 +109,90 @@ def _next_border() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Arco-iris
+# Gradientes (os nomes "rainbow" ficaram por compatibilidade)
 # ---------------------------------------------------------------------------
 
-def _hue_hex(hue: float) -> str:
-    r, g, b = colorsys.hsv_to_rgb(hue % 1.0, 0.65, 1.0)
+# Dois gradientes com papeis diferentes:
+#   "owl"    -> vermelho, so na coruja: e' a identidade visual do agente;
+#   "chrome" -> azul calmo, em reguas, molduras e titulos, para o resto da CLI
+#               parecer um terminal normal.
+# Em ambos o que varia ao longo do texto e' saturacao e brilho dentro de uma
+# faixa estreita de matiz, em vez de atravessar o circulo cromatico.
+_GRADIENTES = {
+    # centro 356 graus (vermelho), +/- 16 graus: rosa-avermelhado a vermelho-alaranjado
+    "owl": {"centro": 0.99, "span": 0.044, "sat": (0.78, 0.20), "val": (0.86, 0.14)},
+    # centro 205 graus (azul), +/- 13 graus: azul-esverdeado a azul
+    "chrome": {"centro": 0.57, "span": 0.036, "sat": (0.42, 0.28), "val": (0.72, 0.28)},
+}
+
+
+def _gradient_hex(position: float, scheme: str = "chrome") -> str:
+    """Cor de um dos gradientes do app.
+
+    "owl"    -> familia do vermelho: identidade visual da coruja.
+    "chrome" -> azul calmo: reguas, molduras e titulos, para a CLI parecer um
+                terminal normal em vez de um painel vermelho.
+    """
+    perfil = _GRADIENTES.get(scheme, _GRADIENTES["chrome"])
+    ciclo = position % 1.0
+    angulo = ciclo * math.tau
+    matiz = (perfil["centro"] + perfil["span"] * math.sin(angulo)) % 1.0
+    # Pisos altos evitam tom lavado, que some no fundo preto do console.
+    saturacao = min(perfil["sat"][0] + perfil["sat"][1] * (0.5 + 0.5 * math.sin(angulo * 2 + 1.1)), 1.0)
+    brilho = min(perfil["val"][0] + perfil["val"][1] * (0.5 + 0.5 * math.sin(angulo * 3 + 2.3)), 1.0)
+    r, g, b = colorsys.hsv_to_rgb(matiz, saturacao, brilho)
     return f"#{int(r * 255):02X}{int(g * 255):02X}{int(b * 255):02X}"
 
 
-def rainbow_text(text: str, shift: float = 0.0, step: float = 0.035, bold: bool = True) -> Text:
-    """Texto com uma cor diferente por caractere (gradiente arco-iris)."""
+def _red_hex(position: float) -> str:
+    """Gradiente vermelho. Usado SOMENTE na coruja."""
+    return _gradient_hex(position, "owl")
+
+
+def rainbow_text(
+    text: str,
+    shift: float = 0.0,
+    step: float = 0.035,
+    bold: bool = True,
+    scheme: str = "chrome",
+) -> Text:
+    """Texto com uma cor diferente por caractere, dentro do gradiente escolhido."""
     out = Text()
     prefix = "bold " if bold else ""
     for i, ch in enumerate(text):
         if ch.isspace():
             out.append(ch)
         else:
-            out.append(ch, style=f"{prefix}{_hue_hex(shift + i * step)}")
+            out.append(ch, style=f"{prefix}{_gradient_hex(shift + i * step, scheme)}")
     return out
 
 
 class RainbowLine:
-    """Texto arco-iris que anima sozinho quando usado dentro de um Live."""
+    """Linha do gradiente que anima sozinha dentro de um Live."""
 
-    def __init__(self, text: str, speed: float = 0.6, step: float = 0.035) -> None:
+    def __init__(self, text: str, speed: float = 0.6, step: float = 0.035, scheme: str = "chrome") -> None:
         self.text = text
         self.speed = speed
         self.step = step
+        self.scheme = scheme
 
     def __rich_console__(self, console: Console, options):
-        yield rainbow_text(self.text, time.monotonic() * self.speed, self.step)
+        # Numa janela minimizada a linha nao cabe e o rich NAO corta (soft_wrap):
+        # ela quebraria em varias linhas visuais e desalinharia o Live, deixando
+        # o indicador repetido na tela. Melhor nao desenhar nada.
+        if options.max_width < len(self.text) + 6:
+            return
+        yield rainbow_text(self.text, time.monotonic() * self.speed, self.step, scheme=self.scheme)
 
 
 class RainbowRule:
-    """Regua horizontal em arco-iris, com titulo opcional. speed>0 anima."""
+    """Regua horizontal no gradiente da interface, com titulo opcional. speed>0 anima."""
 
-    def __init__(self, title: str = "", speed: float = 0.0, char: str = "─") -> None:
+    def __init__(self, title: str = "", speed: float = 0.0, char: str = "─", scheme: str = "chrome") -> None:
         self.title = title
         self.speed = speed
         self.char = char
+        self.scheme = scheme
 
     def __rich_console__(self, console: Console, options):
         width = max(options.max_width, 1)
@@ -132,32 +203,85 @@ class RainbowRule:
             line = self.char * side + label + self.char * max(width - side - len(label), 0)
         else:
             line = self.char * width
-        yield rainbow_text(line, shift, 1.0 / width)
+        yield rainbow_text(line, shift, 1.0 / width, scheme=self.scheme)
 
 
-def _banner_frame(shift: float) -> Align:
-    robot = Text()
-    for i, line in enumerate(ROBOT_ART):
-        robot.append_text(rainbow_text(line, shift + i * 0.08, 0.05))
-        if i < len(ROBOT_ART) - 1:
-            robot.append("\n")
-    title = rainbow_text("AGENTE PESSOAL", shift, 0.06)
-    subtitle = Text("assistente de voz local", style="muted")
-    return Align.center(
-        Group(Align.center(robot), Text(""), Align.center(title), Align.center(subtitle))
-    )
+def _centered(text: Text, width: int) -> Text:
+    """Centraliza UMA linha com espaco so a esquerda.
+
+    O Align.center preenche a linha ate a largura toda do terminal, e linhas
+    nesse limite sao justamente as que dependem do comportamento de quebra do
+    console. Preenchendo so a esquerda a linha termina cedo.
+    """
+    pad = max((max(width, 1) - len(text.plain)) // 2, 0)
+    if not pad or not text.plain:
+        return text
+    return Text(" " * pad) + text
+
+
+def _banner_frame(shift: float, width: int) -> Group:
+    # Uma entrada por linha: cada uma e' centralizada individualmente.
+    # A coruja e' a unica parte com o gradiente vermelho (identidade do agente);
+    # titulo e subtitulo usam o azul calmo do resto da interface.
+    linhas = [
+        rainbow_text(line, shift + i * 0.08, 0.05, scheme="owl")
+        for i, line in enumerate(OWL_ART)
+    ]
+    linhas.append(Text(""))
+    linhas.append(rainbow_text("AGENTE PESSOAL", shift, 0.06))
+    linhas.append(Text("assistente de voz local", style="muted"))
+    return Group(*[_centered(linha, width) for linha in linhas])
+
+
+def _animacao_ligada() -> bool:
+    """Animacao e OPT-IN: AGENTE_ANIMACAO=1 liga; AGENTE_SEM_ANIMACAO=1 forca off.
+
+    Medido no fluxo ANSI: o rich acerta a contabilidade (quadro de 12 linhas,
+    11 subidas de cursor), mas o cmd.exe do usuario nao honra as subidas como o
+    rich espera e cada quadro fica na tela, empilhando o logo. Como e' so um
+    enfeite de abertura, o padrao seguro e' desenhar uma vez, sem regiao Live.
+    """
+    if os.getenv("AGENTE_SEM_ANIMACAO", "").strip().lower() in {"1", "true", "sim", "yes", "on"}:
+        return False
+    return os.getenv("AGENTE_ANIMACAO", "").strip().lower() in {"1", "true", "sim", "yes", "on"}
+
+
+def _banner_fits() -> bool:
+    """A animacao so roda com espaco de sobra: ver BANNER_MIN_WIDTH/HEIGHT."""
+    if not _animacao_ligada() or not console.is_terminal:
+        return False
+    return (console.width or 0) >= BANNER_MIN_WIDTH and (console.height or 0) >= BANNER_MIN_HEIGHT
 
 
 def banner() -> None:
-    """Cabecalho principal exibido ao iniciar o app: robozinho animado + titulo."""
+    """Cabecalho exibido ao iniciar o app: coruja + titulo.
+
+    Estatico por padrao: o logo aparece uma unica vez. Com AGENTE_ANIMACAO=1 roda
+    o gradiente vermelho animado, parando sozinho se a janela mudar de tamanho.
+    """
     console.print()
-    if console.is_terminal:
-        with Live(_banner_frame(0.0), console=console, refresh_per_second=30) as live:
+    if not _banner_fits():
+        console.print(_banner_frame(0.0, console.width))
+        console.print()
+        console.print(RainbowRule())
+        return
+
+    tamanho_inicial = (console.width, console.height)
+    animou = False
+    try:
+        with Live(_banner_frame(0.0, console.width), console=console, refresh_per_second=30) as live:
+            animou = True
             for frame in range(30):
-                live.update(_banner_frame(frame * 0.03))
+                # Redimensionou ou minimizou no meio? O rich nao consegue mais
+                # apagar os quadros anteriores e cada um vira um logo novo na
+                # tela. Parar aqui preserva o ultimo quadro bom.
+                if (console.width, console.height) != tamanho_inicial:
+                    break
+                live.update(_banner_frame(frame * 0.03, console.width))
                 time.sleep(0.04)
-    else:
-        console.print(_banner_frame(0.0))
+    except (OSError, ValueError):
+        if not animou:
+            console.print(_banner_frame(0.0, console.width))
     console.print()
     console.print(RainbowRule())
 
@@ -262,17 +386,30 @@ def status(message: str) -> None:
 
 @contextmanager
 def thinking(message: str = "pensando..."):
-    """Indicador animado em arco-iris. Use: with ui.thinking(): ... chamada lenta ..."""
-    if not console.is_terminal:
+    """Indicador animado no gradiente vermelho. Use: with ui.thinking(): ... lento ..."""
+    if not _animacao_ligada() or not console.is_terminal or (console.height or 0) < 3:
         yield
         return
-    with Live(
-        RainbowLine(f"● {message}"),
-        console=console,
-        refresh_per_second=20,
-        transient=True,
-    ):
+    live = None
+    try:
+        live = Live(
+            RainbowLine(f"● {message}"),
+            console=console,
+            refresh_per_second=20,
+            transient=True,
+        )
+        live.start()
+    except (OSError, ValueError):
+        # Sem animacao o app continua; o indicador e cosmetico.
         yield
+        return
+    try:
+        yield
+    finally:
+        try:
+            live.stop()
+        except (OSError, ValueError):
+            pass
 
 
 @contextmanager
@@ -403,6 +540,181 @@ def _glass_lexer(path: str) -> str:
         ".md": "markdown", ".yml": "yaml", ".yaml": "yaml",
         ".ps1": "powershell", ".sh": "bash", ".bat": "batch",
     }.get(suffix, "text")
+
+
+# Modo verboso: por padrao os cartoes de ferramenta mostram um resumo legivel
+# em vez do JSON cru. "/verboso" liga o despejo completo para depuracao.
+_VERBOSE = False
+
+
+def set_verbose(enabled: bool) -> bool:
+    global _VERBOSE
+    _VERBOSE = bool(enabled)
+    return _VERBOSE
+
+
+def verbose() -> bool:
+    return _VERBOSE
+
+
+def _short_url(url: object, limit: int = 60) -> str:
+    text = str(url or "")
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
+
+
+def _browser_target_label(arguments: dict, result: dict) -> str:
+    """Descreve em poucas palavras o alvo ou o valor da acao no Chrome."""
+    operation = str(result.get("operation") or "")
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    target = result.get("target") if isinstance(result.get("target"), dict) else {}
+
+    if target:
+        label = str(target.get("label") or "")
+        coordinates = f"({target.get('x')}, {target.get('y')})" if target.get("x") is not None else ""
+        described = (label + " " + coordinates).strip()
+        if described:
+            return described
+
+    if operation in {"open_tab", "navigate"}:
+        after = result.get("after") if isinstance(result.get("after"), dict) else {}
+        return _short_url(after.get("url") or arguments.get("url") or "")
+    if operation in {"fill", "select"}:
+        value = " ".join(str(arguments.get("value", "")).split())
+        if not value:
+            return ""
+        return '"' + (value[:40] + "…" if len(value) > 40 else value) + '"'
+    if operation == "press":
+        return str(arguments.get("key") or "")
+    if operation == "click_at":
+        label = str(arguments.get("expected_label") or "")
+        coordinates = f"({arguments.get('x')}, {arguments.get('y')})" if arguments.get("x") is not None else ""
+        return (label + " " + coordinates).strip()
+    if operation == "click":
+        return str(data.get("target") or data.get("label") or "element_ref")
+    if operation == "inspect":
+        elements = data.get("elements")
+        return f"{len(elements)} elementos" if isinstance(elements, list) else ""
+    if operation == "list_tabs":
+        tabs = data.get("tabs")
+        return f"{len(tabs)} abas" if isinstance(tabs, list) else ""
+    if operation == "screenshot":
+        width, height = result.get("width"), result.get("height")
+        return f"{width}x{height}" if width and height else ""
+    if operation == "download":
+        return str(data.get("file_path") or "")[:80]
+    if operation == "wait":
+        return " ".join(str(arguments.get("text") or arguments.get("url_contains") or "").split())[:60]
+    if operation == "close_tab":
+        return "aba fechada"
+    return ""
+
+
+def _url_origin(url: object) -> str:
+    match = re.match(r"^([a-z]+://[^/]+)", str(url or ""), re.IGNORECASE)
+    return match.group(1).lower() if match else ""
+
+
+def _url_path(url: object) -> str:
+    match = re.match(r"^[a-z]+://[^/]+(/.*)?$", str(url or ""), re.IGNORECASE)
+    return (match.group(1) or "/") if match else str(url or "")
+
+
+def _browser_state_change(result: dict) -> str:
+    """Mostra o efeito observavel: mudanca de URL, de titulo ou de conteudo."""
+    before = result.get("before") if isinstance(result.get("before"), dict) else {}
+    after = result.get("after") if isinstance(result.get("after"), dict) else {}
+    if not before or not after:
+        return ""
+    before_url, after_url = str(before.get("url") or ""), str(after.get("url") or "")
+    if before_url != after_url:
+        if _url_origin(before_url) and _url_origin(before_url) == _url_origin(after_url):
+            # Mesmo site: o caminho e a informacao util, nao o dominio repetido.
+            return f"{_short_url(_url_path(before_url), 22)} → {_short_url(_url_path(after_url), 40)}"
+        return f"{_short_url(before_url, 26)} → {_short_url(after_url, 34)}"
+    if str(before.get("title") or "") != str(after.get("title") or ""):
+        return 'titulo: "' + str(after.get("title"))[:50] + '"'
+    if str(before.get("text") or "") != str(after.get("text") or ""):
+        return "conteudo da pagina mudou"
+    return ""
+
+
+def browser_action_line(name: str, arguments: dict | None, result: dict) -> str:
+    """Uma unica linha legivel com o que a acao fez no Chrome."""
+    operation = str(result.get("operation") or name.replace("browser_", "", 1) or name)
+    pieces = [operation]
+    label = _browser_target_label(arguments or {}, result)
+    if label:
+        pieces.append(label)
+    change = _browser_state_change(result)
+    if change:
+        pieces.append(change)
+    error = str(result.get("error_code") or "")
+    if error:
+        pieces.append(error)
+    return " · ".join(piece for piece in pieces if piece)
+
+
+def browser_compact_lines(result: dict) -> list[str]:
+    """Lista sem UUIDs para inspecao e abas: o que um humano precisa ler."""
+    operation = str(result.get("operation") or "")
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    lines: list[str] = []
+    if operation == "inspect":
+        title = str(data.get("title") or "")
+        url = _short_url(data.get("url") or "", 72)
+        if title or url:
+            lines.append((title + "  " + url).strip())
+        elements = data.get("elements")
+        if isinstance(elements, list):
+            for element in elements[:8]:
+                if not isinstance(element, dict):
+                    continue
+                role = str(element.get("role") or "?")
+                name = " ".join(str(element.get("name") or "").split()) or "(sem nome)"
+                extra = str(element.get("type") or element.get("placeholder") or "")
+                if extra:
+                    name = f"{name}  [{extra}]"
+                lines.append(f"  {role:<9} {name[:70]}")
+            if len(elements) > 8:
+                lines.append(f"  … mais {len(elements) - 8} elementos (o agente recebe todos)")
+    elif operation == "list_tabs":
+        tabs = data.get("tabs")
+        if isinstance(tabs, list):
+            for tab in tabs[:8]:
+                if not isinstance(tab, dict):
+                    continue
+                lines.append(f"  {tab.get('id')}  {str(tab.get('title') or '')[:44]}")
+                lines.append(f"            {_short_url(tab.get('url') or '', 70)}")
+            if len(tabs) > 8:
+                lines.append(f"  … mais {len(tabs) - 8} abas")
+    return lines
+
+
+def chat_tool_pending(name: str, arguments: dict | None = None) -> None:
+    """Aviso imediato, antes de a ferramenta rodar.
+
+    Uma captura com analise visual leva segundos; sem esta linha o terminal fica
+    parado durante a acao e parece travado.
+    """
+    arguments = arguments or {}
+    detail = ""
+    if name in {"browser_fill", "browser_select"}:
+        value = " ".join(str(arguments.get("value", "")).split())
+        detail = '"' + (value[:32] + "…" if len(value) > 32 else value) + '"'
+    elif name == "browser_press":
+        detail = str(arguments.get("key") or "")
+    elif name in {"browser_navigate", "browser_open_tab"}:
+        detail = _short_url(arguments.get("url") or "", 48)
+    elif name == "run_terminal":
+        detail = str(arguments.get("command") or "")[:48]
+    elif name in {"read_file", "write_file", "edit_file", "read_file_range"}:
+        detail = str(arguments.get("path") or "")[-48:]
+    console.print(
+        f"[info]⚙[/info] [accent]{name}[/accent]"
+        + (f" [muted]{detail}[/muted]" if detail else "")
+    )
 
 
 def _browser_preview_value(value: object, text_limit: int = 400) -> dict | None:
@@ -621,14 +933,29 @@ def chat_tool_card(
         table.add_row("comando", command[:120] + ("..." if len(command) > 120 else ""))
     table.add_row("status", f"[{status_style}]{status_label}[/{status_style}]")
 
+    # Leitura em tempo real: uma linha dizendo o que a acao fez no Chrome, sem
+    # UUIDs de element_ref e sem o JSON cru (que so aparece em /verboso).
+    browser_result = result if (name.startswith("browser_") and isinstance(result, dict)) else None
+    if browser_result is not None:
+        summary = browser_action_line(name, arguments, browser_result)
+        if summary:
+            table.add_row("resumo", summary[:150])
+
     body = [table]
     if repeated:
         body.append(Text("mesmos argumentos ja executados nesta solicitacao", style="muted"))
+    elif browser_result is not None and not verbose():
+        lines = browser_compact_lines(browser_result)
+        observation = str(browser_result.get("observation") or "").strip()
+        if observation and failed:
+            lines.append(observation[:200])
+        for line in lines:
+            body.append(Text(line, style="white"))
     elif result_text:
         first_line = next((line.strip() for line in result_text.splitlines() if line.strip()), "")
         if first_line and first_line.lower() not in preview.lower():
             body.append(Text(first_line[:220], style="muted"))
-    if preview and not repeated:
+    if preview and not repeated and (browser_result is None or verbose()):
         body.append(Syntax(preview, _glass_lexer(path), theme="monokai", line_numbers=True, word_wrap=True))
 
     console.print(

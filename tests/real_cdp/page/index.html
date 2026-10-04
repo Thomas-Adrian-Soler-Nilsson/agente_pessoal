@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><title>Página de teste CDP</title></head>
+<body>
+  <!-- Espelha os controles do sintoma real: textbox com aria-label,
+       editor contenteditable, campo de senha, botão sem nome e botão Enviar. -->
+  <textarea aria-label="Mensagem" placeholder="Mensagem" id="msg"></textarea>
+  <div contenteditable="true" role="textbox" aria-label="Editor" id="editor"></div>
+  <input type="password" autocomplete="new-password" id="senha">
+  <button id="anonimo"></button>
+  <button id="enviar">Enviar</button>
+  <script>
+    window.__events = [];
+    document.addEventListener("keydown", function (e) {
+      window.__events.push({ type: "keydown", key: e.key, keyCode: e.keyCode, code: e.code });
+    });
+    document.addEventListener("input", function (e) {
+      var t = e.target;
+      var label = (t.getAttribute && (t.getAttribute("aria-label") || t.getAttribute("placeholder"))) || t.tagName;
+      var value = t.value !== undefined && t.value !== null ? String(t.value) : String(t.textContent || "");
+      window.__events.push({ type: "input", target: String(label), value: value.slice(0, 80) });
+    });
+    document.getElementById("enviar").addEventListener("click", function () {
+      window.__events.push({ type: "clicked", id: "enviar" });
+    });
+    // Simula SPA que troca a URL após a primeira mensagem (DeepSeek vai para
+    // /a/chat/s/<id>): a URL muda sem recarregar o documento, então o loaderId
+    // continua o mesmo e só a comparação de URL invalida as referências antigas.
+    window.__spaNavigate = function (suffix) {
+      history.pushState({}, "", "/a/chat/s/" + suffix);
+      return location.href;
+    };
+    // Substitui o textarea por um novo com o mesmo aria-label (simula
+    // re-render de SPA mantendo papel+nome), sob comando do teste.
+    window.__replaceMessageField = function () {
+      var old = document.getElementById("msg");
+      var fresh = document.createElement("textarea");
+      fresh.setAttribute("aria-label", "Mensagem");
+      fresh.setAttribute("placeholder", "Mensagem");
+      fresh.id = "msg";
+      old.parentNode.replaceChild(fresh, old);
+      return true;
+    };
+  </script>
+</body>
+</html>

@@ -10,11 +10,12 @@ class ToolArgumentsError(ValueError):
 
 def is_tool_json_error(error) -> bool:
     text = str(error).lower()
+    # "invalid_request_error" e "jsondecodeerror" foram removidos: eles casam com
+    # qualquer erro 400 (modelo inexistente, contexto estourado, imagem não
+    # suportada). O agente então dizia "JSON inválido" e escondia a causa real.
     return (
         "failed to parse tool call arguments as json" in text
         or "tool_use_failed" in text
-        or "invalid_request_error" in text
-        or "jsondecodeerror" in text
         or "toolargumentserror" in text
     )
 

@@ -243,22 +243,38 @@ def open_public_page(url: str, max_chars: int = 12000, focus_query: str = "") ->
             ])
 
         if not extracted or len(extracted.strip()) < 20 or _is_js_locked(extracted):
-            # Dynamic fallback using BrowserTools
+            # Fallback dinâmico via BrowserTools. A aba anônima precisa ser fechada
+            # mesmo quando a extração falha: antes, cada tentativa deixava uma aba
+            # aberta no perfil do usuário.
+            browser = None
+            tab_id = None
             try:
                 from tools.browser import BrowserTools
                 browser = BrowserTools()
                 tab_res = browser.open_tab(response.url, incognito=True)
                 if tab_res.get("status") == "success":
-                    tab_id = tab_res.get("data", {}).get("tab_id") or tab_res.get("tab", {}).get("id")
+                    # A resposta de open_tab traz "tab" e um "data" com valor None.
+                    # Usar .get("data", {}) devolvia None e lançava AttributeError,
+                    # engolido pelo except: o fallback nunca funcionava.
+                    tab_id = (tab_res.get("data") or {}).get("tab_id") or (tab_res.get("tab") or {}).get("id")
                     if tab_id:
                         browser.wait(tab_id, timeout=8)
                         inspect_res = browser.inspect(tab_id, max_chars=max_chars)
                         if inspect_res.get("status") == "success":
-                            extracted = inspect_res.get("data", {}).get("text", "")
-                        browser.close_tab(tab_id)
-                browser.close()
+                            extracted = (inspect_res.get("data") or {}).get("text", "")
             except Exception:
                 pass
+            finally:
+                if browser is not None:
+                    if tab_id:
+                        try:
+                            browser.close_tab(tab_id)
+                        except Exception:
+                            pass
+                    try:
+                        browser.close()
+                    except Exception:
+                        pass
 
         if not extracted or len(extracted.strip()) < 20:
             status = "extraction_failure"

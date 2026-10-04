@@ -222,7 +222,7 @@ O sistema utiliza ferramentas estruturadas para permitir que o modelo execute a�
 ### Pesquisa e navegador
 
 - `web_search` encontra fontes públicas; `web_open` lê uma página; `deep_search` compara fontes e `code_search` prioriza documentação e repositórios.
-- As ferramentas `browser_*` operam abas HTTP/HTTPS da sessão Chrome por meio da extensão local. `browser_inspect` lê o estado e retorna referências de elementos; a extensão valida essas referências antes de clicar ou preencher. `browser_visual_click` captura, analisa e tenta um único clique visual. O screenshot aparece como prévia colorida no terminal e é enviado ao provedor visual selecionado; no fallback, a mesma imagem pode ser enviada a mais de um provedor.
+- As ferramentas `browser_*` operam abas HTTP/HTTPS da sessão Chrome por meio da extensão local. `browser_inspect` lê o estado e retorna referências de elementos; a extensão valida essas referências antes de clicar ou preencher. `browser_visual_click` captura, analisa e tenta um único clique visual. O screenshot aparece como prévia colorida no terminal e é enviado ao provedor visual selecionado; no fallback, a mesma imagem pode ser enviada a mais de um provedor. Cada solicitação tem um orçamento de 3 falhas de browser e abre no máximo 1 aba; quando o limite é atingido, a resposta final informa o `error_code` real.
 - Para instalar a integração no Windows, execute `tools\install_browser_bridge.ps1` no PowerShell a partir da raiz. Em `chrome://extensions`, habilite o modo do desenvolvedor e use **Carregar sem compactação** apontando para `browser_extension/`. Inicie/reinicie o agente e confira o popup da extensão. Para remover o host registrado, execute `tools\uninstall_browser_bridge.ps1`.
 - O Chrome não permite controlar páginas internas como `chrome://extensions`. Capturas antigas, mudanças de aba, navegação, rolagem ou viewport podem invalidar um clique. Campos de senha são bloqueados. Enviar, publicar, comprar, excluir ou confirmar pode exigir autorização explícita.
 
@@ -545,6 +545,58 @@ GEMINI_TTS_VOICE=Kore
 
 A reprodução/resposta pode ser interrompida manualmente com `Esc`. No modo texto, digite `/voz` para iniciar a entrada pelo microfone.
 
+## Comandos do modo texto
+
+| Comando | Efeito |
+| --- | --- |
+| `/voz` | inicia a entrada pelo microfone |
+| `/loop [n]` | o agente continua sozinho por `n` rodadas depois da sua próxima mensagem (padrão 5, máximo 50) |
+| `/loop off` | encerra o modo autônomo |
+| `/goal <objetivo>` | define o objetivo e **já começa a trabalhar nele sozinho** por até 10 rodadas |
+| `/goal off` | remove o objetivo e encerra o modo autônomo |
+| `/verboso` | alterna entre o resumo legível e o JSON completo das ações |
+| `/ajuda` | lista os comandos |
+
+No modo autônomo cada rodada é enviada automaticamente, sem passar pelo prompt, e aparece no terminal como `Você › …` para você ver o que foi pedido. `Esc` interrompe o raciocínio e encerra o modo autônomo. O agente para sozinho quando responde começando com `OBJETIVO CONCLUÍDO` ou `TAREFA CONCLUÍDA`, ou quando o limite de rodadas acaba.
+
+Durante a execução, cada ferramenta mostra uma linha `⚙ nome_da_ferramenta` **antes** de rodar (importante em capturas com análise visual, que levam segundos) e, ao terminar, um cartão com uma linha de resumo como `press · Enter · / → /a/chat/s/af7acbf0…`. Para ver o JSON cru de cada resposta, use `/verboso`.
+
+### Tema visual
+
+A CLI usa um esquema convencional e organizado — uma cor por papel — e o **vermelho fica reservado para a coruja** (a identidade visual do agente) e para o estado de falha:
+
+| Elemento | Cor | Onde aparece |
+| --- | --- | --- |
+| Coruja (banner) | gradiente **vermelho** `#FA0716`–`#F95C34` | logo de abertura |
+| Marca (`brand`) | azul `#38BDF8` | réguas, molduras, títulos de seção |
+| Sucesso (`ok`) | verde `#4ADE80` | `✔` e status CONCLUÍDA |
+| Aviso (`warn`) | âmbar `#FBBF24` | `⚠` e ferramenta repetida |
+| Falha (`error`) | vermelho `#F87171` | `✖` e status FALHOU |
+| Informação (`info`) / usuário | azul claro `#7DD3FC` | `ℹ`, `⚙`, prompt `Você ›` |
+| Agente | violeta `#C4B5FD` | prefixo das respostas |
+| Destaque (`accent`) | branco suave `#F1F5F9` | nomes de ferramenta e títulos de painel |
+| Secundário (`muted`) | cinza `#9CA3AF` | textos de apoio |
+
+Há dois gradientes, com papéis separados: `owl` (vermelho, só na coruja) e `chrome` (azul calmo, em réguas, molduras e no título do banner). Eles não se misturam — `tests/test_theme_palette.py` verifica isso. A borda das respostas alterna entre seis tons frios e calmos (azul, azul claro, violeta, água, índigo e azul suave), então duas mensagens seguidas não ficam idênticas sem virar arco-íris. O realce de código dos cartões usa o `monokai` padrão, que já tem fundo escuro próprio (sem ele o pygments usaria o fundo claro padrão e o texto claro ficaria ilegível).
+
+As cores ficam todas em `ui/ui.py`: `THEME`, `BORDER_COLORS` e `_GRADIENTES`. `tests/test_theme_palette.py` trava o esquema: falha se alguém deixar a interface vermelha, se dois estados ficarem com a mesma cor ou se o vermelho aparecer fora da coruja e da falha.
+
+### Animação e terminais problemáticos
+
+O banner (coruja) e o indicador `● pensando...` são desenhados **uma única vez, sem animação**. Motivo medido: o `cmd.exe` não reposiciona o cursor como o rich espera, então cada quadro da animação ficava na tela e o logo aparecia empilhado dezenas de vezes.
+
+Se o seu terminal se comportar bem e você quiser o gradiente animado:
+
+```env
+AGENTE_ANIMACAO=1
+```
+
+Com a animação ligada ela só roda em terminal com ≥ 40 colunas e ≥ 14 linhas, e **para sozinha** se a janela for redimensionada ou minimizada no meio dela. Para forçar o modo estático mesmo com a animação ligada:
+
+```env
+AGENTE_SEM_ANIMACAO=1
+```
+
 A detecção automática de fala durante o TTS pode ser ativada com:
 
 ```env
@@ -559,7 +611,7 @@ TTS_INTERRUPT_THRESHOLD=0.08
 
 ## Chrome e screenshots
 
-`browser_screenshot` captura uma aba HTTP/HTTPS do Chrome. O screenshot aparece como prévia colorida no CMD antes da análise; a prévia é renderizada em memória e não cria um arquivo no repositório. A imagem é enviada ao modelo visual escolhido, que retorna um alvo e coordenadas em pixels. Em fallback, provedores adicionais podem receber a mesma imagem.
+`browser_screenshot` captura uma aba HTTP/HTTPS do Chrome. O screenshot aparece como prévia colorida no CMD antes da análise; a prévia é renderizada em memória e não cria um arquivo no repositório. A imagem é enviada ao modelo visual escolhido, que retorna um alvo em coordenadas normalizadas de 0 a 1000; o agente converte essas coordenadas para pixels da imagem. Em fallback, provedores adicionais podem receber a mesma imagem.
 
 Na inicialização do modo texto, escolha fallback automático, ordem personalizada para a sessão, um provedor fixo ou desative a análise. Para definir uma ordem padrão, configure `VISION_MODEL_ORDER` com IDs disponíveis `provedor/modelo` separados por vírgula:
 

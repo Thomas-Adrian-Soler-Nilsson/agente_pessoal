@@ -231,10 +231,20 @@ async function rebindElementRef(tabId, ref) {
 async function nodeDescription(tabId, ref) {
   try {
     const out = await cdp(tabId, "DOM.describeNode", { backendNodeId: ref.backendId, depth: 1, pierce: true });
-    if (out?.node?.nodeId) return out.node;
+    // DOM.describeNode não rastreia nós (nodeId volta sempre 0) e ainda devolve
+    // nós JÁ REMOVIDOS do documento, sem lançar. A prova de vida é isConnected no
+    // objeto resolvido: sem ela, fill/click escreveriam num nó morto e reportariam
+    // sucesso sem tocar a página.
+    if (out?.node) {
+      const object = await cdp(tabId, "DOM.resolveNode", { backendNodeId: ref.backendId });
+      if (object?.object?.objectId) {
+        const alive = await cdp(tabId, "Runtime.callFunctionOn", { objectId: object.object.objectId, functionDeclaration: "function(){return this.isConnected===true;}", returnByValue: true });
+        if (alive?.result?.value === true) return out.node;
+      }
+    }
   } catch (_) {}
   const rebound = await rebindElementRef(tabId, ref);
-  if (!rebound?.node?.nodeId) throw new Error("stale_element_reference");
+  if (!rebound?.node) throw new Error("stale_element_reference");
   ref.backendId = rebound.backendId;
   return rebound.node;
 }
@@ -247,13 +257,16 @@ function riskyElement(ref, node) {
   const searchForm = /search|buscar|pesquisar|query|consulta/i.test(label) || /search/i.test(attrs.type || "");
   return !searchForm && (String(attrs.type || "").toLowerCase() === "submit" || riskyWords || (form && String(attrs.type || "").toLowerCase() === "submit"));
 }
-async function clickRef(tabId, ref, confirmationToken = "") {
+async function clickRef(tabId, ref, confirmationToken = "", elementRef = "") {
   const node = await nodeDescription(tabId, ref);
   const token = confirmationToken && confirmations.get(confirmationToken);
   if (token && token.expires <= Date.now()) confirmations.delete(confirmationToken);
-  if (riskyElement(ref, node) && (!token || token.expires <= Date.now() || token.tabId !== tabId || token.ref !== ref)) {
+  // A comparacao e' pelo element_ref (texto), nao pelo objeto: cada requisicao
+  // le as referencias do chrome.storage.session e recebe um objeto NOVO, entao
+  // "token.ref !== ref" era sempre verdadeiro e a confirmacao nunca valia.
+  if (riskyElement(ref, node) && (!token || token.expires <= Date.now() || token.tabId !== tabId || !elementRef || token.elementRef !== elementRef)) {
     const id = crypto.randomUUID();
-    confirmations.set(id, { tabId, ref, expires: Date.now() + 60000 });
+    confirmations.set(id, { tabId, elementRef, expires: Date.now() + 60000 });
     return { confirmation_required: true, confirmation_token: id, label: ref.name || ref.ariaLabel || ref.tag || "ação" };
   }
   if (confirmationToken) confirmations.delete(confirmationToken);
@@ -278,23 +291,34 @@ async function fillRef(tabId, ref, value, isSelect = false) {
   const passwordGuard = "if((" + isPasswordField.toString() + ")(this)) throw new Error('password_field_blocked');";
   const fn = isSelect
     ? "function(v){ if(this.tagName!=='SELECT') throw new Error('not_a_select'); const setter=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value')?.set; if(!setter) throw new Error('not_selectable'); setter.call(this,v); this.dispatchEvent(new Event('input',{bubbles:true})); this.dispatchEvent(new Event('change',{bubbles:true})); return this.value===v; }"
-    : "function(v){ " + passwordGuard + " if(!(['INPUT','TEXTAREA'].includes(this.tagName)||this.isContentEditable)) throw new Error('not_fillable'); this.focus(); if(this.isContentEditable){this.textContent=v;} else {const proto=this.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype; const setter=Object.getOwnPropertyDescriptor(proto,'value')?.set; if(!setter) throw new Error('not_fillable'); setter.call(this,v);} this.dispatchEvent(new Event('input',{bubbles:true})); this.dispatchEvent(new Event('change',{bubbles:true})); return this.isContentEditable?this.textContent===v:this.value===v; }";
+    : "function(v){ " + passwordGuard + " if(!(['INPUT','TEXTAREA'].includes(this.tagName)||this.isContentEditable)) throw new Error('not_fillable'); this.focus(); if(this.isContentEditable){ const r=document.createRange(); r.selectNodeContents(this); const s=getSelection(); s.removeAllRanges(); s.addRange(r); document.execCommand('insertText',false,v); } else {const proto=this.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype; const setter=Object.getOwnPropertyDescriptor(proto,'value')?.set; if(!setter) throw new Error('not_fillable'); setter.call(this,v);} this.dispatchEvent(new Event('input',{bubbles:true})); this.dispatchEvent(new Event('change',{bubbles:true})); return this.isContentEditable ? this.textContent.includes(v) : this.value===v; }";
   const result = await cdp(tabId, "Runtime.callFunctionOn", { objectId: object.object.objectId, functionDeclaration: fn, arguments: [{ value: String(value || "") }], returnByValue: true, awaitPromise: true });
   const exception = result?.exceptionDetails?.exception?.description || result?.exceptionDetails?.text || "";
   if (exception.includes("password_field_blocked")) throw new Error("password_field_blocked");
   if (result?.exceptionDetails || result?.result?.value !== true) throw new Error("fill_not_verified");
   return { filled: true, value_length: String(value || "").length };
 }
-async function pressKey(tabId, key) {
-  if (key === "Enter") {
+async function pressKey(tabId, key, allowSubmit = false) {
+  // allowSubmit vem do app quando o usuario desligou a confirmacao de acoes
+  // arriscadas; sem isso o Enter num formulario com botao "Enviar" seria
+  // recusado mesmo com o usuario tendo pedido para nao confirmar.
+  if (key === "Enter" && !allowSubmit) {
     const active = await cdp(tabId, "Runtime.evaluate", { expression: "(()=>{const e=document.activeElement;const f=e&&e.form;const b=f&&f.querySelector('button[type=submit],input[type=submit]');return b?{type:b.type,label:(b.innerText||b.value||b.getAttribute('aria-label')||'').slice(0,100)}:null})()", returnByValue: true });
     const submit = active?.result?.value;
     if (submit && /\b(send|submit|publish|pay|buy|purchase|delete|remove|confirm|order|enviar|publicar|pagar|comprar|excluir|remover|confirmar|finalizar)\b/i.test(submit.label || "")) throw new Error("submit_requires_button_confirmation");
   }
-  const allowed = new Set(["Enter", "Tab", "Escape", "Backspace", "Delete", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End", "PageDown", "PageUp"]);
-  if (!allowed.has(key)) throw new Error("unsupported_key");
-  await cdp(tabId, "Input.dispatchKeyEvent", { type: "keyDown", key });
-  await cdp(tabId, "Input.dispatchKeyEvent", { type: "keyUp", key });
+  const KEYS = {
+    Enter:{code:"Enter",vk:13,text:"\r"}, Tab:{code:"Tab",vk:9}, Escape:{code:"Escape",vk:27},
+    Backspace:{code:"Backspace",vk:8}, Delete:{code:"Delete",vk:46},
+    ArrowDown:{code:"ArrowDown",vk:40}, ArrowUp:{code:"ArrowUp",vk:38},
+    ArrowLeft:{code:"ArrowLeft",vk:37}, ArrowRight:{code:"ArrowRight",vk:39},
+    Home:{code:"Home",vk:36}, End:{code:"End",vk:35}, PageDown:{code:"PageDown",vk:34}, PageUp:{code:"PageUp",vk:33}
+  };
+  const k = KEYS[key];
+  if (!k) throw new Error("unsupported_key");
+  const base = { key, code:k.code, windowsVirtualKeyCode:k.vk, nativeVirtualKeyCode:k.vk };
+  await cdp(tabId, "Input.dispatchKeyEvent", { ...base, type: k.text ? "keyDown" : "rawKeyDown", text: k.text });
+  await cdp(tabId, "Input.dispatchKeyEvent", { ...base, type: "keyUp" });
   return { key };
 }
 async function waitFor(tabId, args) {
@@ -388,10 +412,14 @@ function jpegDimensions(base64) {
 async function screenshot(tabId) {
   const visual = await visualPageMetrics(tabId);
   const stateBeforeCapture = await visualStateSignature(tabId, visual.metrics);
-  const shot = await cdp(tabId, "Page.captureScreenshot", { format: "jpeg", quality: 65, fromSurface: true, captureBeyondViewport: false });
+  let shot, quality = 65;
+  for (; quality >= 30; quality -= 15) {
+    shot = await cdp(tabId, "Page.captureScreenshot", { format: "jpeg", quality, fromSurface: true, captureBeyondViewport: false });
+    if ((shot.data || "").length <= 700000) break;
+  }
   const stateAfterCapture = await visualStateSignature(tabId, visual.metrics);
   const visualStateComplete = visualStateGuard.sameVisualState(stateBeforeCapture, stateAfterCapture);
-  if ((shot.data || "").length > 800000) throw new Error("screenshot_too_large");
+  if ((shot.data || "").length > 700000) throw new Error("screenshot_too_large");
   const screenshotId = crypto.randomUUID();
   const dpr = Math.max(0.5, Math.min(Number(visual.metrics.dpr) || 1, 4));
   const jpegSize = jpegDimensions(shot.data);
@@ -502,7 +530,7 @@ async function clickAt(tabId, args) {
   await cdp(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", x: cssX, y: cssY, button: "left", clickCount: 1 });
   return { clicked: true, x, y, css_x: cssX, css_y: cssY, target: ref.name || ref.ariaLabel || ref.tag || "área da página" };
 }
-async function download(tabId, ref, confirmationToken = "") {
+async function download(tabId, ref, confirmationToken = "", elementRef = "") {
   const node = await nodeDescription(tabId, ref);
   const attrs = {};
   for (let i = 0; i < (node.attributes || []).length; i += 2) attrs[node.attributes[i].toLowerCase()] = node.attributes[i + 1];
@@ -510,13 +538,13 @@ async function download(tabId, ref, confirmationToken = "") {
   if (!rawHref) throw new Error("element_has_no_download_url");
   const href = new URL(rawHref, (await chrome.tabs.get(tabId)).url).href;
   if (!safeUrl(href)) throw new Error("unsupported_download_url");
-  if (riskyElement(ref, node) && !confirmationToken) return clickRef(tabId, ref);
+  if (riskyElement(ref, node) && !confirmationToken) return clickRef(tabId, ref, "", elementRef);
   const created = new Promise((resolve, reject) => {
     const timer = setTimeout(() => { chrome.downloads.onCreated.removeListener(listener); reject(new Error("download_not_started")); }, 30000);
     function listener(item) { if (item.url === href || item.finalUrl === href) { clearTimeout(timer); chrome.downloads.onCreated.removeListener(listener); resolve(item.id); } }
     chrome.downloads.onCreated.addListener(listener);
   });
-  const clicked = await clickRef(tabId, ref, confirmationToken);
+  const clicked = await clickRef(tabId, ref, confirmationToken, elementRef);
   if (clicked.confirmation_required) return clicked;
   const id = await created;
   const finished = new Promise((resolve, reject) => {
@@ -580,7 +608,7 @@ async function handleRequest(request) {
     } else if (request.operation === "click") {
       const tabsBefore = await chrome.tabs.query({ windowId: tab.windowId });
       const ref = await getRef(tab.id, args.element_ref);
-      const action = await clickRef(tab.id, ref, args.confirmation_token || "");
+      const action = await clickRef(tab.id, ref, args.confirmation_token || "", args.element_ref);
       if (action.confirmation_required) return responseBase(request, "confirmation_required", { tab: beforeTab, before, observation: "Esta ação pode enviar ou confirmar dados fora do navegador.", data: action, error_code: "user_confirmation_required" });
       await new Promise(resolve => setTimeout(resolve, 120));
       const after = await pageState(tab.id);
@@ -595,7 +623,7 @@ async function handleRequest(request) {
       const after = await pageState(tab.id);
       return responseBase(request, "success", { tab: shortTab(await chrome.tabs.get(tab.id)), before, after, observation: request.operation === "fill" ? "Campo preenchido e valor confirmado no elemento." : "Opção selecionada e valor confirmado no elemento.", data });
     } else if (request.operation === "press") {
-      data = await pressKey(tab.id, args.key || "Enter");
+      data = await pressKey(tab.id, args.key || "Enter", args.allow_submit === true);
       await new Promise(resolve => setTimeout(resolve, 250));
       const after = await pageState(tab.id);
       const changed = before.url !== after.url || before.title !== after.title || before.text !== after.text;
@@ -626,7 +654,7 @@ async function handleRequest(request) {
       data = await screenshot(tab.id);
     } else if (request.operation === "download") {
       const ref = await getRef(tab.id, args.element_ref);
-      data = await download(tab.id, ref, args.confirmation_token || "");
+      data = await download(tab.id, ref, args.confirmation_token || "", args.element_ref);
       if (data?.confirmation_required) return responseBase(request, "confirmation_required", { tab: beforeTab, before, observation: "Este download ou ação exige confirmação explícita.", data, error_code: "user_confirmation_required" });
     } else if (request.operation === "search_site") {
       return responseBase(request, "failure", { tab: beforeTab, before, error_code: "site_search_not_available", retry_hint: "Use web_search with a site:domain query, then web_open on selected public results." });
@@ -646,7 +674,7 @@ async function handleRequest(request) {
   } catch (error) {
     const code = String(error?.message || error);
     const retry = code.includes("screenshot") || code.includes("coordinates_out_of_bounds") ? "browser_screenshot" : code.includes("stale") || code.includes("visible") ? "browser_inspect" : "browser_list_tabs";
-    return responseBase(request, "failure", { tab: beforeTab, error_code: code.slice(0, 160), retry_hint: retry, observation: "A operação não foi concluída." });
+    return responseBase(request, "failure", { tab: beforeTab, error_code: code.slice(0, 160), retry_hint: retry, observation: "A operação não foi concluída: " + code });
   } finally {
     await detach(tab.id);
   }

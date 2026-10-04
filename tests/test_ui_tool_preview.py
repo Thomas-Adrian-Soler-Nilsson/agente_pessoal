@@ -88,5 +88,107 @@ class ToolPreviewTests(unittest.TestCase):
         self.assertNotIn("previa reduzida", rendered)
 
 
+class BrowserActionReadabilityTests(unittest.TestCase):
+    """A leitura em tempo real: uma linha por acao, sem UUIDs e sem JSON cru."""
+
+    def _inspect_result(self):
+        return {
+            "status": "success",
+            "operation": "inspect",
+            "tab": {"id": 12, "url": "https://chat.deepseek.com/", "title": "DeepSeek"},
+            "before": {"url": "https://chat.deepseek.com/", "title": "DeepSeek"},
+            "after": {"url": "https://chat.deepseek.com/", "title": "DeepSeek"},
+            "data": {
+                "url": "https://chat.deepseek.com/",
+                "title": "DeepSeek - Rumo ao Desconhecido",
+                "elements": [
+                    {"element_ref": "540badbe-8855-495f-9651-33fc34c3322e", "role": "textbox", "name": "Mensagem para DeepSeek"},
+                    {"element_ref": "845a16fa-d599-4fb9-99ab-df2768769052", "role": "button", "name": ""},
+                ],
+            },
+        }
+
+    def test_inspect_summary_is_one_short_line(self):
+        line = ui.browser_action_line("browser_inspect", {"tab_id": 12}, self._inspect_result())
+        self.assertEqual(line, "inspect · 2 elementos")
+
+    def test_compact_lines_drop_element_refs_and_name_empty_controls(self):
+        rendered = "\n".join(ui.browser_compact_lines(self._inspect_result()))
+        self.assertIn("DeepSeek - Rumo ao Desconhecido", rendered)
+        self.assertIn("Mensagem para DeepSeek", rendered)
+        self.assertIn("(sem nome)", rendered)
+        self.assertIn("textbox", rendered)
+        self.assertNotIn("540badbe", rendered, "UUID de element_ref não ajuda quem lê")
+
+    def test_press_summary_shows_the_observable_url_change(self):
+        result = {
+            "status": "success",
+            "operation": "press",
+            "before": {"url": "https://chat.deepseek.com/", "title": "DeepSeek"},
+            "after": {
+                "url": "https://chat.deepseek.com/a/chat/s/af7acbf0-dc0c-4994-b5d9-68330662d14a",
+                "title": "Oi - DeepSeek",
+            },
+        }
+
+        line = ui.browser_action_line("browser_press", {"key": "Enter"}, result)
+
+        self.assertIn("press", line)
+        self.assertIn("Enter", line)
+        self.assertIn("→", line)
+        self.assertIn("/a/chat/s/af7acbf0", line)
+
+    def test_fill_summary_shows_value_and_error_code(self):
+        result = {"status": "failure", "operation": "fill", "error_code": "stale_element_reference"}
+
+        line = ui.browser_action_line("browser_fill", {"value": "oi"}, result)
+
+        self.assertIn('"oi"', line)
+        self.assertIn("stale_element_reference", line)
+
+    def test_visual_click_summary_keeps_the_target_label(self):
+        result = {
+            "type": "browser_visual_click",
+            "status": "failure",
+            "error_code": "visual_state_unavailable",
+            "target": {"label": "Enviar mensagem", "x": 1584, "y": 200},
+        }
+
+        line = ui.browser_action_line("browser_visual_click", {}, result)
+
+        self.assertIn("Enviar mensagem", line)
+        self.assertIn("visual_state_unavailable", line)
+
+    def test_card_hides_raw_json_and_verbose_brings_it_back(self):
+        output = StringIO()
+        with patch.object(ui, "console", Console(file=output, width=110, force_terminal=False, theme=ui.THEME)):
+            ui.chat_tool_card("browser_inspect", arguments={"tab_id": 12}, result=self._inspect_result())
+
+        rendered = output.getvalue()
+        self.assertIn("inspect · 2 elementos", rendered)
+        self.assertIn("Mensagem para DeepSeek", rendered)
+        self.assertNotIn("element_ref", rendered, "o JSON cru não deve aparecer por padrão")
+
+        verbose_output = StringIO()
+        ui.set_verbose(True)
+        try:
+            with patch.object(ui, "console", Console(file=verbose_output, width=110, force_terminal=False, theme=ui.THEME)):
+                ui.chat_tool_card("browser_inspect", arguments={"tab_id": 12}, result=self._inspect_result())
+        finally:
+            ui.set_verbose(False)
+
+        self.assertIn("element_ref", verbose_output.getvalue(), "/verboso precisa restaurar o JSON completo")
+
+    def test_pending_notice_is_a_single_line_with_the_value(self):
+        output = StringIO()
+        with patch.object(ui, "console", Console(file=output, width=100, force_terminal=False, theme=ui.THEME)):
+            ui.chat_tool_pending("browser_fill", {"value": "mensagem bem longa " * 4})
+
+        rendered = output.getvalue().strip()
+        self.assertEqual(len(rendered.splitlines()), 1)
+        self.assertIn("browser_fill", rendered)
+        self.assertIn("mensagem bem longa", rendered)
+
+
 if __name__ == "__main__":
     unittest.main()

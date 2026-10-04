@@ -35,7 +35,6 @@ class FileTools:
         ".yml",
         ".log",
         ".ini",
-        ".env",
         ".pdf",
         ".docx",
         ".odt",
@@ -132,6 +131,19 @@ class FileTools:
             .strip('"')
         )
 
+        # Credenciais nunca passam pelas ferramentas: read_file entregaria as
+        # chaves do .env ao provedor de IA.
+        blocked_name = Path(value).name.lower()
+        if (
+            blocked_name == "browser-bridge.json"
+            or blocked_name.startswith(".env")
+            or blocked_name.endswith(".pem")
+            or blocked_name.startswith("id_rsa")
+        ):
+            raise PermissionError(
+                "Arquivo de credenciais bloqueado para leitura ou escrita."
+            )
+
         normalized = value.replace(
             "/",
             "\\",
@@ -218,7 +230,7 @@ class FileTools:
             .resolve()
         )
 
-        for root in self.allowed_roots + self.explicit_roots:
+        for root in self.allowed_roots:
 
             try:
 
