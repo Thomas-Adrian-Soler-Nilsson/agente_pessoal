@@ -9,6 +9,7 @@ from unittest.mock import patch
 from memory.temporal_memory import TemporalMemory
 from providers.compatible_agent import CompatibleAgent, build_tools
 from providers.router import AutomaticAgent
+from tools.browser import BrowserTools
 from tools.files import FileTools
 from tools.tool_call_parser import (
     is_tool_json_error,
@@ -173,6 +174,41 @@ class WorkingProvider(FailingProvider):
 
 
 class AgentContractsTests(unittest.TestCase):
+    def test_browser_tools_share_broker_until_last_instance_closes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "browser-bridge.json"
+            with patch("tools.browser_bridge._config_path", return_value=config_path):
+                primary = BrowserTools()
+                temporary = BrowserTools()
+                self.addCleanup(primary.close)
+                self.addCleanup(temporary.close)
+
+                self.assertIs(primary.bridge, temporary.bridge)
+                self.assertTrue(config_path.exists())
+
+                temporary.close()
+                self.assertTrue(config_path.exists())
+
+                primary.close()
+                self.assertFalse(config_path.exists())
+
+    def test_browser_click_at_forwards_expected_target_label(self):
+        class Bridge:
+            def __init__(self):
+                self.request = None
+
+            def execute(self, operation, arguments, timeout=30):
+                self.request = (operation, arguments)
+                return {"status": "success"}
+
+        bridge = Bridge()
+        browser = BrowserTools(bridge=bridge)
+
+        browser.click_at(42, "shot-1", 65, 165, expected_label="Minha Conta")
+
+        self.assertEqual(bridge.request[0], "click_at")
+        self.assertEqual(bridge.request[1]["expected_label"], "Minha Conta")
+
     def test_tool_registry_contains_core_tools(self):
         names = {
             item["function"]["name"]
@@ -184,7 +220,340 @@ class AgentContractsTests(unittest.TestCase):
             "read_file",
             "capture_screen",
             "capture_webcam",
+            "browser_visual_click",
         }.issubset(names))
+
+    def test_browser_visual_click_captures_clicks_and_verifies_in_order(self):
+        events = []
+        screenshot = {
+            "type": "image",
+            "image_kind": "browser_screenshot",
+            "screenshot_id": "shot-123",
+            "width": 800,
+            "height": 600,
+            "mime_type": "image/jpeg",
+            "data": "image-bytes",
+        }
+
+        def execute(name, arguments):
+            events.append((name, arguments))
+            if name == "browser_screenshot":
+                return screenshot
+            if name == "browser_click_at":
+                return {"status": "success", "data": {"clicked": True}}
+            if name == "browser_inspect":
+                return {"status": "success", "data": {"title": "Página seguinte"}}
+            self.fail(f"tool inesperada: {name}")
+
+        class Vision:
+            def analyze(self, image, task):
+                events.append(("vision", image, task))
+                return {
+                    "type": "vision_analysis",
+                    "status": "success",
+                    "screenshot_id": "shot-123",
+                    "analysis": {
+                        "status": "targets_found",
+                        "targets": [{
+                            "label": "Entrar",
+                            "x": 123,
+                            "y": 84,
+                            "confidence": 0.91,
+                            "actionable": True,
+                        }, {
+                            "label": "Ajuda",
+                            "x": 600,
+                            "y": 500,
+                            "confidence": 0.8,
+                            "actionable": True,
+                        }],
+                    },
+                }
+
+        agent = CompatibleAgent(FakeCompletionClient(), "test-model", execute, vision_agent=Vision())
+        result = agent._run_tool(
+            "browser_visual_click",
+            {"tab_id": 42, "goal": "Clique no botão Entrar"},
+        )
+
+        self.assertEqual([event[0] for event in events], [
+            "browser_screenshot", "vision", "browser_click_at", "browser_inspect",
+        ])
+        self.assertEqual(events[1][1], screenshot)
+        self.assertEqual(events[1][2], "Clique no botão Entrar")
+        self.assertEqual(events[2][1], {
+            "tab_id": 42,
+            "screenshot_id": "shot-123",
+            "x": 123,
+            "y": 84,
+            "expected_label": "Entrar",
+        })
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["verification"]["status"], "success")
+        self.assertNotIn("data", result)
+
+    def test_failed_visual_click_blocks_retry_and_keeps_error_visible(self):
+        calls = []
+        screenshot = {
+            "type": "image",
+            "image_kind": "browser_screenshot",
+            "screenshot_id": "shot-failed",
+            "width": 800,
+            "height": 600,
+            "mime_type": "image/jpeg",
+            "data": "image-bytes",
+        }
+
+        def execute(name, arguments):
+            calls.append(name)
+            if name == "browser_screenshot":
+                return screenshot
+            if name == "browser_click_at":
+                return {"status": "failure", "error_code": "page_changed_since_screenshot"}
+            if name == "browser_inspect":
+                return {"status": "success", "data": {"title": "Erro 998/999"}}
+            if name == "browser_click":
+                return {"status": "success"}
+            self.fail(f"tool inesperada: {name}")
+
+        class Vision:
+            def analyze(self, image, task):
+                return {
+                    "type": "vision_analysis",
+                    "status": "success",
+                    "screenshot_id": image["screenshot_id"],
+                    "analysis": {
+                        "status": "targets_found",
+                        "targets": [{
+                            "label": "Minha Conta",
+                            "x": 240,
+                            "y": 90,
+                            "confidence": 0.95,
+                            "actionable": True,
+                        }],
+                    },
+                }
+
+        agent = CompatibleAgent(FakeCompletionClient(), "test-model", execute, vision_agent=Vision())
+        result = agent._run_tool(
+            "browser_visual_click",
+            {"tab_id": 42, "goal": "Clique em Minha Conta"},
+        )
+        agent._run_tool("browser_inspect", {"tab_id": 42})
+        retry = agent._run_tool(
+            "browser_click",
+            {"tab_id": 42, "element_ref": "ref-after-failure"},
+        )
+
+        self.assertEqual(result["error_code"], "page_changed_since_screenshot")
+        self.assertIn("page_changed_since_screenshot", agent.operation_state.last_error)
+        self.assertEqual(retry["status"], "blocked")
+        self.assertEqual(retry["error_code"], "retry_suppressed_after_browser_failure")
+        self.assertIn("page_changed_since_screenshot", agent.operation_state.last_error)
+        self.assertEqual(calls, ["browser_screenshot", "browser_click_at", "browser_inspect"])
+
+        list(agent.ask_stream("Tente novamente nesta nova solicitação."))
+        self.assertNotIn(42, agent._failed_browser_tabs)
+
+    def test_browser_visual_click_does_not_click_uncertain_or_tied_targets(self):
+        image = {
+            "type": "image",
+            "image_kind": "browser_screenshot",
+            "screenshot_id": "shot-uncertain",
+            "width": 800,
+            "height": 600,
+            "mime_type": "image/jpeg",
+            "data": "image-bytes",
+        }
+        analyses = [
+            {"status": "uncertain", "targets": [{"label": "Entrar", "x": 20, "y": 30, "confidence": 0.99, "actionable": True}]},
+            {"status": "targets_found", "targets": [{"label": "Entrar", "x": 20, "y": 30, "confidence": 0.71, "actionable": False}]},
+            {"status": "targets_found", "targets": [{"label": "Fora da tela", "x": 900, "y": 30, "confidence": 0.99, "actionable": True}]},
+            {"status": "targets_found", "targets": [
+                {"label": "Entrar", "x": 20, "y": 30, "confidence": 0.9, "actionable": True},
+                {"label": "Continuar", "x": 40, "y": 30, "confidence": 0.9, "actionable": True},
+            ]},
+        ]
+
+        for analysis in analyses:
+            with self.subTest(analysis=analysis):
+                calls = []
+
+                def execute(name, arguments):
+                    calls.append(name)
+                    return image if name == "browser_screenshot" else {"status": "success"}
+
+                class Vision:
+                    def analyze(self, screenshot, task):
+                        return {
+                            "type": "vision_analysis",
+                            "status": "success",
+                            "screenshot_id": "shot-uncertain",
+                            "analysis": analysis,
+                        }
+
+                agent = CompatibleAgent(FakeCompletionClient(), "test-model", execute, vision_agent=Vision())
+                result = agent._run_tool(
+                    "browser_visual_click",
+                    {"tab_id": 42, "goal": "Clique no controle correto"},
+                )
+
+                self.assertEqual(calls, ["browser_screenshot"])
+                self.assertEqual(result["status"], "uncertain")
+                self.assertIn(result["error_code"], {"no_actionable_target", "ambiguous_visual_target"})
+                self.assertNotEqual(agent.operation_state.last_successful_operation, "browser_visual_click")
+                self.assertEqual(agent.operation_state.last_error, "browser_visual_click: uncertain")
+
+    def test_browser_visual_click_preserves_confirmation_without_claiming_success(self):
+        image = {
+            "type": "image",
+            "image_kind": "browser_screenshot",
+            "screenshot_id": "shot-confirm",
+            "width": 800,
+            "height": 600,
+            "mime_type": "image/jpeg",
+            "data": "image-bytes",
+        }
+        calls = []
+
+        def execute(name, arguments):
+            calls.append(name)
+            if name == "browser_screenshot":
+                return image
+            return {
+                "status": "confirmation_required",
+                "error_code": "user_confirmation_required",
+                "data": {"confirmation_token": "confirm-1", "label": "Enviar"},
+            }
+
+        class Vision:
+            def analyze(self, screenshot, task):
+                return {
+                    "type": "vision_analysis",
+                    "status": "success",
+                    "screenshot_id": "shot-confirm",
+                    "analysis": {
+                        "status": "targets_found",
+                        "targets": [{"label": "Enviar", "x": 250, "y": 90, "confidence": 0.95, "actionable": True}],
+                    },
+                }
+
+        agent = CompatibleAgent(FakeCompletionClient(), "test-model", execute, vision_agent=Vision())
+        result = agent._run_tool(
+            "browser_visual_click",
+            {"tab_id": 42, "goal": "Enviar o formulário"},
+        )
+
+        self.assertEqual(calls, ["browser_screenshot", "browser_click_at"])
+        self.assertEqual(result["status"], "confirmation_required")
+        self.assertEqual(result["click"]["data"]["confirmation_token"], "confirm-1")
+        self.assertNotIn("verification", result)
+        self.assertNotEqual(agent.operation_state.last_successful_operation, "browser_visual_click")
+
+    def test_browser_visual_click_rejects_analysis_for_another_screenshot(self):
+        image = {
+            "type": "image",
+            "image_kind": "browser_screenshot",
+            "screenshot_id": "shot-current",
+            "width": 800,
+            "height": 600,
+            "mime_type": "image/jpeg",
+            "data": "image-bytes",
+        }
+        calls = []
+
+        def execute(name, arguments):
+            calls.append(name)
+            return image
+
+        class Vision:
+            def analyze(self, screenshot, task):
+                return {
+                    "type": "vision_analysis",
+                    "status": "success",
+                    "screenshot_id": "shot-old",
+                    "analysis": {
+                        "status": "targets_found",
+                        "targets": [{"label": "Entrar", "x": 123, "y": 84, "confidence": 0.99, "actionable": True}],
+                    },
+                }
+
+        agent = CompatibleAgent(FakeCompletionClient(), "test-model", execute, vision_agent=Vision())
+        result = agent._run_tool(
+            "browser_visual_click",
+            {"tab_id": 42, "goal": "Clique em Entrar"},
+        )
+
+        self.assertEqual(calls, ["browser_screenshot"])
+        self.assertEqual(result["status"], "uncertain")
+        self.assertEqual(result["error_code"], "screenshot_id_mismatch")
+
+    def test_browser_visual_click_preserves_screenshot_setup_failure(self):
+        calls = []
+
+        def execute(name, arguments):
+            calls.append(name)
+            return {
+                "status": "setup_needed",
+                "error_code": "bridge_setup_needed",
+                "observation": "Abra o popup da extensão para conectar.",
+            }
+
+        agent = CompatibleAgent(FakeCompletionClient(), "test-model", execute, vision_agent=object())
+        result = agent._run_tool(
+            "browser_visual_click",
+            {"tab_id": 42, "goal": "Clique em Entrar"},
+        )
+
+        self.assertEqual(calls, ["browser_screenshot"])
+        self.assertEqual(result["status"], "setup_needed")
+        self.assertEqual(result["error_code"], "bridge_setup_needed")
+
+    def test_browser_visual_click_keeps_uncertain_click_uncertain_after_inspection(self):
+        image = {
+            "type": "image",
+            "image_kind": "browser_screenshot",
+            "screenshot_id": "shot-unclear-result",
+            "width": 800,
+            "height": 600,
+            "mime_type": "image/jpeg",
+            "data": "image-bytes",
+        }
+        calls = []
+
+        def execute(name, arguments):
+            calls.append((name, arguments))
+            if name == "browser_screenshot":
+                return image
+            if name == "browser_click_at":
+                return {"status": "uncertain", "error_code": "postcondition_not_observed"}
+            if name == "browser_inspect":
+                return {"status": "success", "data": {"title": "Página"}}
+            self.fail(f"tool inesperada: {name}")
+
+        class Vision:
+            def analyze(self, screenshot, task):
+                return {
+                    "type": "vision_analysis",
+                    "status": "success",
+                    "screenshot_id": "shot-unclear-result",
+                    "analysis": {
+                        "status": "targets_found",
+                        "targets": [{"label": "Próxima", "x": 300, "y": 200, "confidence": 0.93, "actionable": True}],
+                    },
+                }
+
+        agent = CompatibleAgent(FakeCompletionClient(), "test-model", execute, vision_agent=Vision())
+        result = agent._run_tool(
+            "browser_visual_click",
+            {"tab_id": 42, "goal": "Avançar para a próxima etapa"},
+        )
+
+        self.assertEqual([name for name, _ in calls], [
+            "browser_screenshot", "browser_click_at", "browser_inspect",
+        ])
+        self.assertEqual(result["status"], "uncertain")
+        self.assertEqual(result["error_code"], "post_click_verification_uncertain")
 
     def test_cancelled_agent_does_not_call_provider(self):
         client = FakeCompletionClient()

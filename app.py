@@ -22,22 +22,39 @@ from tools.three_d_router import generate_3d_auto
 from tools.threews_3d import generate_threews
 from tools.triposr import generate_triposr
 from webcam.webcam import Webcam
-from tools.web_search import search_and_read
-from tools import web_search as search_web
+from tools.web_research import discover_sources, open_public_page, deep_search as research_deep_search, code_search as research_code_search
 
 Avatar = None
 load_dotenv()
 
 
 class LocalToolExecutor:
-    def __init__(self, screen, webcam):
+    def __init__(self, screen, webcam, browser_tools=None):
         self.screen = screen
         self.webcam = webcam
         self.computer = ComputerTools()
-        self.browser = BrowserTools()
+        self.browser = browser_tools if browser_tools is not None else BrowserTools()
+        self._owns_browser = browser_tools is None
         self.files = FileTools()
         self.developer = DeveloperTools(self.files)
         self.images = ImageGenerator()
+
+    def _confirm_browser_outcome(self, outcome, retry):
+        if not isinstance(outcome, dict) or outcome.get("status") != "confirmation_required":
+            return outcome
+        data = outcome.get("data") or {}
+        label = data.get("label", "ação externa")
+        answer = ui.prompt(f"O Chrome vai executar '{label}'. Autorizar? [s/N]: ").strip().lower()
+        if answer not in {"s", "sim", "y", "yes"}:
+            return {**outcome, "status": "failure", "error_code": "user_denied", "observation": "Ação cancelada pelo usuário; nada foi enviado."}
+        return retry(data.get("confirmation_token", ""))
+
+    def close(self):
+        if self._owns_browser:
+            try:
+                self.browser.close()
+            except Exception:
+                pass
 
     def execute(self, name, arguments):
         arguments = arguments or {}
@@ -48,35 +65,112 @@ class LocalToolExecutor:
         if name == "open_url":
             return self.computer.open_url(arguments.get("url", ""))
         if name == "web_search":
-            return search_and_read(arguments.get("query", ""))
+            return discover_sources(arguments.get("query", ""), arguments.get("max_results", 5))
+        if name == "web_open":
+            return open_public_page(arguments.get("url", ""), arguments.get("max_chars", 12000), arguments.get("focus_query", ""))
         if name == "deep_search":
-            return search_web.deep_search(arguments.get("query", ""))
+            return research_deep_search(arguments.get("query", ""), arguments.get("max_sites", 7), arguments.get("max_chars_per_site", 3000))
         if name == "code_search":
-            return search_web.code_search(arguments.get("query", ""))
+            return research_code_search(arguments.get("query", ""), arguments.get("max_sites", 5), arguments.get("max_chars_per_site", 3000))
+        if name == "browser_list_tabs":
+            return self.browser.list_tabs()
+        if name == "browser_inspect":
+            return self.browser.inspect(arguments.get("tab_id"), arguments.get("max_chars", 12000))
         if name == "browser_navigate":
-            return self.browser.navigate(arguments.get("url", ""))
-        if name == "browser_read":
-            return self.browser.read(arguments.get("max_chars"))
-        if name == "browser_snapshot":
-            return self.browser.snapshot(arguments.get("max_chars"))
+            return self.browser.navigate(arguments.get("url", ""), arguments.get("tab_id"))
+        if name == "browser_open_tab":
+            return self.browser.open_tab(arguments.get("url", ""))
         if name == "browser_click":
-            return self.browser.click(arguments.get("selector", ""))
+            outcome = self.browser.click(arguments.get("tab_id"), arguments.get("element_ref", ""))
+            return self._confirm_browser_outcome(outcome, lambda token: self.browser.click(arguments.get("tab_id"), arguments.get("element_ref", ""), token))
+        if name == "browser_visual_click":
+            tab_id = arguments.get("tab_id")
+            goal = arguments.get("goal", "")
+            # Step 1: Capture screenshot (triggers automatic VisionAgent analysis via _prepare_tool_result in compatible_agent.py)
+            screenshot_outcome = self.browser.screenshot(tab_id)
+            if screenshot_outcome.get("status") != "success":
+                return screenshot_outcome
+            # Step 2: Get vision analysis targets with coordinates (auto-detected by AI)
+            analysis = screenshot_outcome.get("analysis", {})
+            targets = analysis.get("targets", [])
+            if not targets:
+                # Fallback: inspect to get element_ref if no vision targets found
+                inspect_outcome = self.browser.inspect(tab_id, 12000)
+                if inspect_outcome.get("status") != "success":
+                    return inspect_outcome
+                element_ref = inspect_outcome.get("data", {}).get("element_ref", "")
+                if not element_ref:
+                    return {"status": "failure", "error_code": "no_element_ref", "observation": "Nenhum elemento inspecionado encontrado após análise visual."}
+                # Click with element_ref (tries native clickable element)
+                click_outcome = self.browser.click(tab_id, element_ref)
+                return self._confirm_browser_outcome(click_outcome, lambda token: self.browser.click(tab_id, element_ref, token))
+            # Step 3: Use the best target's coordinates for click_at (works for ANY element type: <img>, <div>, <button>, etc.)
+            best = targets[0]
+            x = best.get("x", 0)
+            y = best.get("y", 0)
+            confidence = best.get("confidence", 0)
+            screenshot_id = screenshot_outcome.get("screenshot_id", "")
+            if not screenshot_id:
+                return {"status": "failure", "error_code": "no_screenshot_id", "observation": "ID do screenshot não disponível."}
+            # Click at coordinates - this works for icons, images, divs, buttons, etc.
+            expected_label = str(best.get("label", ""))
+            click_outcome = self.browser.click_at(tab_id, screenshot_id, x, y, expected_label=expected_label)
+            return self._confirm_browser_outcome(click_outcome, lambda token: self.browser.click_at(tab_id, screenshot_id, x, y, token, expected_label))
+        if name == "browser_click_at":
+            tab_id = arguments.get("tab_id")
+            screenshot_id = arguments.get("screenshot_id", "")
+            x, y = arguments.get("x"), arguments.get("y")
+            expected_label = str(arguments.get("expected_label", ""))
+            outcome = self.browser.click_at(tab_id, screenshot_id, x, y, expected_label=expected_label)
+            return self._confirm_browser_outcome(outcome, lambda token: self.browser.click_at(tab_id, screenshot_id, x, y, token, expected_label))
         if name == "browser_fill":
-            return self.browser.fill(arguments.get("selector", ""), arguments.get("value", ""))
-        if name == "browser_mouse_click":
-            return self.browser.mouse_click(arguments.get("x", 0), arguments.get("y", 0), arguments.get("button", "left"))
-        if name == "browser_mouse_move":
-            return self.browser.mouse_move(arguments.get("x", 0), arguments.get("y", 0))
-        if name == "browser_type":
-            return self.browser.type_text(arguments.get("text", ""), arguments.get("delay", 0))
+            return self.browser.fill(arguments.get("tab_id"), arguments.get("element_ref", ""), arguments.get("value", ""))
+        if name == "browser_select":
+            return self.browser.select(arguments.get("tab_id"), arguments.get("element_ref", ""), arguments.get("value", ""))
         if name == "browser_press":
-            return self.browser.press(arguments.get("key", "Enter"))
+            return self.browser.press(arguments.get("tab_id"), arguments.get("key", "Enter"))
+        if name == "browser_wait":
+            return self.browser.wait(arguments.get("tab_id"), arguments.get("text", ""), arguments.get("url_contains", ""), arguments.get("timeout", 10))
+        if name == "browser_back":
+            return self.browser.back(arguments.get("tab_id"))
         if name == "browser_screenshot":
-            return self.browser.screenshot(arguments.get("path", ""))
+            outcome = self.browser.screenshot(arguments.get("tab_id"))
+            if outcome.get("status") == "success" and isinstance(outcome.get("data"), dict):
+                shot = outcome["data"]
+                return {
+                    "type": "image",
+                    "image_kind": "browser_screenshot",
+                    "screenshot_id": shot.get("screenshot_id"),
+                    "width": shot.get("width"),
+                    "height": shot.get("height"),
+                    "mime_type": shot.get("mime_type", "image/jpeg"),
+                    "data": shot.get("data", ""),
+                    "description": (
+                        f"{outcome.get('observation', 'Screenshot do Chrome')} "
+                        f"screenshot_id={shot.get('screenshot_id')}; "
+                        f"dimensões={shot.get('width')}x{shot.get('height')} px; "
+                        "clique visual usa coordenadas da imagem desde o canto superior esquerdo."
+                    ),
+                }
+            return outcome
         if name == "browser_download":
-            return self.browser.download(arguments.get("selector", ""), arguments.get("path", ""))
+            outcome = self.browser.download(arguments.get("tab_id"), arguments.get("element_ref", ""), arguments.get("path", ""))
+            return self._confirm_browser_outcome(outcome, lambda token: self.browser.download(arguments.get("tab_id"), arguments.get("element_ref", ""), arguments.get("path", ""), token))
         if name == "browser_search_site":
-            return self.browser.search_site(arguments.get("query", ""), arguments.get("max_pages", 5))
+            outcome = self.browser.search_site(arguments.get("tab_id"), arguments.get("query", ""), arguments.get("max_pages", 5))
+            if outcome.get("error_code") != "site_search_not_available":
+                return outcome
+            tabs = self.browser.list_tabs().get("data", {}).get("tabs", [])
+            selected = next((tab for tab in tabs if tab.get("id") == int(arguments.get("tab_id"))), None)
+            if not selected:
+                return outcome
+            from urllib.parse import urlsplit
+            domain = urlsplit(selected.get("url", "")).hostname or ""
+            result = discover_sources(f"site:{domain} {arguments.get('query', '')}", arguments.get("max_pages", 5))
+            result["strategy"] = "site_scoped_discovery"
+            result["scope_domain"] = domain
+            result["coverage"] = "Resultados indexados pelo mecanismo de busca; não é varredura completa do site."
+            return result
         if name == "list_directory":
             return self.files.list_directory(arguments.get("path", "~"))
         if name == "inspect_project":
@@ -216,8 +310,59 @@ def _prompt_choice(title, options):
         ui.error("Escolha inválida.")
 
 
-def _chat_prompt():
-    return terminal_prompt("Você › ")
+def _chat_prompt(default=""):
+    return terminal_prompt("Você › ", default=default)
+
+
+def _read_console_key():
+    if os.name != "nt":
+        return None
+    try:
+        import msvcrt
+        return msvcrt.getwch() if msvcrt.kbhit() else None
+    except (ImportError, OSError):
+        return None
+
+
+def _wait_for_response_or_escape(response_thread, cancel_event, stop_speech, read_key=None):
+    if read_key is None and os.name != "nt":
+        response_thread.join()
+        return "", False
+
+    read_key = read_key or _read_console_key
+    pending = []
+    submitted = []
+    skip_extended_key = False
+
+    while response_thread.is_alive():
+        key = read_key()
+        while key is not None:
+            if skip_extended_key:
+                skip_extended_key = False
+            elif key in {"\x00", "\xe0"}:
+                skip_extended_key = True
+            elif key == "\x1b":
+                cancel_event.set()
+                stop_speech()
+                queued = " ".join(submitted + (["".join(pending)] if pending else []))
+                return queued, True
+            elif key == "\x03":
+                raise KeyboardInterrupt
+            elif key == "\b":
+                if pending:
+                    pending.pop()
+            elif key in {"\r", "\n"}:
+                if pending:
+                    submitted.append("".join(pending))
+                    pending.clear()
+            elif len(key) == 1 and key.isprintable():
+                pending.append(key)
+            key = read_key()
+
+        response_thread.join(timeout=0.025)
+
+    queued = " ".join(submitted + (["".join(pending)] if pending else []))
+    return queued, False
 
 
 def select_avatar_enabled():
@@ -246,6 +391,88 @@ def select_model(provider_name, models, configured_model):
         if choice.isdigit() and 1 <= int(choice) <= len(models):
             return models[int(choice) - 1]
         ui.error("Escolha inválida.")
+
+
+def select_vision_agent():
+    from providers.vision_agent import VisionAgent, available_candidates
+
+    candidates = available_candidates()
+    if not candidates:
+        ui.warn(
+            "Nenhum modelo visual configurado. Screenshots continuarão disponíveis, "
+            "mas para análise visual configure um provedor em .env."
+        )
+        return None
+
+    ui.dialog(
+        "Privacidade da análise visual",
+        "Screenshots do Chrome serão enviados aos modelos escolhidos. Se um modelo "
+        "falhar, a cadeia automática pode encaminhar a mesma captura aos próximos "
+        "provedores. Para páginas sensíveis, escolha somente Ollama local ou desative a análise.",
+        subtitle="O agente visual só identifica alvos; o agente principal continua controlando os cliques.",
+    )
+
+    mode = _prompt_choice("Análise visual de páginas", [
+        {
+            "id": "automatic",
+            "label": "Fallback automático",
+            "description": "Tenta os modelos disponíveis na ordem de VISION_MODEL_ORDER.",
+        },
+        {
+            "id": "ordered",
+            "label": "Definir ordem desta sessão",
+            "description": "Organize os modelos; os seguintes são tentados se um falhar.",
+        },
+        {
+            "id": "fixed",
+            "label": "Usar um modelo fixo",
+            "description": "Não tenta outro provedor se o escolhido falhar.",
+        },
+        {
+            "id": "disabled",
+            "label": "Desativar análise visual",
+            "description": "O agente usa a inspeção textual do navegador.",
+        },
+    ])
+
+    if mode == "disabled":
+        return None
+    if mode == "fixed":
+        selected = _prompt_choice(
+            "Modelo visual fixo",
+            [{"id": item["id"], "label": item["label"], "description": item["id"]} for item in candidates],
+        )
+        candidates = [item for item in candidates if item["id"] == selected]
+    elif mode == "ordered":
+        ui.menu_table(
+            "Modelos de visão disponíveis",
+            [{"label": f"{index}. {item['label']}", "description": item["id"]} for index, item in enumerate(candidates, 1)],
+        )
+        while True:
+            raw = ui.prompt(
+                "Ordem por número (ex.: 3,1,2; Enter mantém a ordem automática): "
+            ).strip()
+            if not raw:
+                break
+            try:
+                indexes = [int(part.strip()) for part in raw.split(",")]
+            except ValueError:
+                ui.error("Use números separados por vírgula.")
+                continue
+            if (
+                not indexes
+                or len(set(indexes)) != len(indexes)
+                or any(index < 1 or index > len(candidates) for index in indexes)
+            ):
+                ui.error("A ordem deve conter números válidos, sem repetição.")
+                continue
+            chosen = [candidates[index - 1] for index in indexes]
+            chosen_ids = {item["id"] for item in chosen}
+            candidates = chosen + [item for item in candidates if item["id"] not in chosen_ids]
+            break
+
+    ui.status("Hierarquia visual: " + " → ".join(item["label"] for item in candidates))
+    return VisionAgent(candidates)
 
 
 def select_stt_provider():
@@ -358,6 +585,7 @@ def run_text_provider(provider_name, agent, stt_provider, tts_provider, fish_voi
     response_thread = None
     speech_thread = None
     response_cancel_event = None
+    pending_prompt = ""
     response_lock = threading.Lock()
     agent_lock = threading.Lock()
     response_id = 0
@@ -401,7 +629,8 @@ def run_text_provider(provider_name, agent, stt_provider, tts_provider, fish_voi
     try:
         while True:
             if avatar: avatar.idle()
-            text = _chat_prompt().strip()
+            text = _chat_prompt(default=pending_prompt).strip()
+            pending_prompt = ""
             if not text: continue
             if text.lower() in {"/voz", "voz", "/voice"}:
                 with response_lock:
@@ -438,8 +667,16 @@ def run_text_provider(provider_name, agent, stt_provider, tts_provider, fish_voi
                 if response_thread is not None: tts.stop()
                 if speech_thread is not None: speech_thread.join(timeout=0.5)
                 response_thread = threading.Thread(target=process_message, args=(text, current_response_id, response_cancel_event), daemon=True)
-                response_thread.start()
-            response_thread.join()
+                current_thread = response_thread
+                ui.info("Pressione Esc para interromper o raciocínio atual.")
+                current_thread.start()
+            pending_prompt, interrupted = _wait_for_response_or_escape(
+                current_thread,
+                response_cancel_event,
+                tts.stop,
+            )
+            if interrupted:
+                ui.warn("Raciocínio interrompido.")
     except KeyboardInterrupt:
         ui.console.print(); ui.warn("Encerrando...")
     finally:
@@ -454,7 +691,7 @@ def run_text_provider(provider_name, agent, stt_provider, tts_provider, fish_voi
         if avatar: avatar.idle()
 
 
-def run_gemini_live(screen, webcam, avatar):
+def run_gemini_live(screen, webcam, avatar, browser_tools=None):
     from audio.text_to_speech import TextToSpeech
     tts_provider = select_tts_provider(gemini_live=True)
     _require_audio_keys(None, tts_provider)
@@ -466,14 +703,21 @@ def run_gemini_live(screen, webcam, avatar):
     else:
         ui.status("Escuta e fala: nativas do Gemini Live")
     if avatar: avatar.listening()
-    agent = GeminiLive(screen=screen, webcam=webcam, tts=external_tts)
-    try: asyncio.run(agent.run())
+    vision_agent = select_vision_agent()
+    agent = None
+    try:
+        agent = GeminiLive(screen=screen, webcam=webcam, tts=external_tts, vision_agent=vision_agent, browser_tools=browser_tools)
+        asyncio.run(agent.run())
     finally:
+        if agent:
+            try: agent.close()
+            except Exception: pass
         if external_tts:
             try: external_tts.stop()
             except Exception: pass
-        try: agent.close()
-        except Exception: pass
+        if vision_agent:
+            try: vision_agent.close()
+            except Exception: pass
 
 
 def create_text_agent(router, choice, gemini_model=None, groq_model=None, mistral_model=None, openrouter_model=None, nvidia_model=None, ollama_model=None, huggingface_model=None, tokenharbor_model=None):
@@ -492,16 +736,26 @@ def create_text_agent(router, choice, gemini_model=None, groq_model=None, mistra
     return router.automatic(groq_model, openrouter_model, nvidia_model, mistral_model, huggingface_model), "Modo automático"
 
 
-def run_text_mode(screen, webcam, avatar, selection):
+def run_text_mode(screen, webcam, avatar, selection, browser_tools=None):
     stt_provider = select_stt_provider()
     tts_provider = select_tts_provider(gemini_live=False)
     _require_audio_keys(stt_provider, tts_provider)
     fish_voice_id = select_fish_voice() if tts_provider == "fish" else None
-    executor = LocalToolExecutor(screen, webcam)
-    router = ProviderRouter(executor.execute)
-    agent, label = create_text_agent(router, selection["choice"], selection.get("gemini_model"), selection["groq_model"], selection["mistral_model"], selection["openrouter_model"], selection["nvidia_model"], selection["ollama_model"], selection.get("huggingface_model"), selection.get("tokenharbor_model"))
-    ui.status(f"STT: {stt_provider}  | TTS: {tts_provider}")
-    run_text_provider(label, agent, stt_provider, tts_provider, fish_voice_id, avatar=avatar)
+    vision_agent = select_vision_agent()
+    executor = None
+    try:
+        executor = LocalToolExecutor(screen, webcam, browser_tools=browser_tools)
+        router = ProviderRouter(executor.execute, vision_agent=vision_agent)
+        agent, label = create_text_agent(router, selection["choice"], selection.get("gemini_model"), selection["groq_model"], selection["mistral_model"], selection["openrouter_model"], selection["nvidia_model"], selection["ollama_model"], selection.get("huggingface_model"), selection.get("tokenharbor_model"))
+        ui.status(f"STT: {stt_provider}  | TTS: {tts_provider}")
+        run_text_provider(label, agent, stt_provider, tts_provider, fish_voice_id, avatar=avatar)
+    finally:
+        try:
+            if executor is not None:
+                executor.close()
+        finally:
+            if vision_agent is not None:
+                vision_agent.close()
 
 
 def start_avatar():
@@ -527,13 +781,19 @@ def close_avatar(avatar):
 
 
 def run():
-    screen = Screen(); webcam = Webcam(); avatar = None; selection = None
+    browser_tools = None
+    webcam = None
+    avatar = None
+    selection = None
     try:
+        browser_tools = BrowserTools()
+        screen = Screen()
+        webcam = Webcam()
         selection = menu()
         selection["show_avatar"] = select_avatar_enabled()
         if selection["show_avatar"]: avatar = start_avatar()
-        if selection["choice"] == "1-live": run_gemini_live(screen, webcam, avatar)
-        else: run_text_mode(screen, webcam, avatar, selection)
+        if selection["choice"] == "1-live": run_gemini_live(screen, webcam, avatar, browser_tools=browser_tools)
+        else: run_text_mode(screen, webcam, avatar, selection, browser_tools=browser_tools)
     except KeyboardInterrupt:
         ui.warn("Encerrando agente...")
         if avatar:
@@ -546,8 +806,12 @@ def run():
         ui.error(f"Erro: {error}")
     finally:
         close_avatar(avatar)
-        try: webcam.close()
-        except Exception: pass
+        if webcam is not None:
+            try: webcam.close()
+            except Exception: pass
+        if browser_tools is not None:
+            try: browser_tools.close()
+            except Exception: pass
 
 
 if __name__ == "__main__":

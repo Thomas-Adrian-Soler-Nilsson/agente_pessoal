@@ -1,72 +1,47 @@
-# ==========================================
-# SEGREDOS E CONFIGURAÇÃO LOCAL
-# ==========================================
-
+# Segredos locais. O exemplo permanece versionado.
 .env
 .env.*
 !.env.example
 
-
-# ==========================================
-# AMBIENTES E CACHES PYTHON
-# ==========================================
-
+# Ambientes virtuais e caches Python.
 .venv/
-.venv-1/
-
+.venv-*/
 venv/
 env/
-
 __pycache__/
 *.py[cod]
 *.pyd
-
 .pytest_cache/
 .mypy_cache/
+.pyright/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
 
-# ==========================================
-# MEMÓRIA E DADOS LOCAIS
-# ==========================================
+# Estado privado gerado pelo agente.
+/memory/memory.json
+/memory/memory.corrupt-*.json
+codex-session-*.md
 
-*.db
-*.sqlite
-*.sqlite3
+# Perfis do navegador e build do Native Messaging host.
+/agent-browser-profile-*/
+/.browser-host-dist/
 
-memory/data/
-data/
-storage/
-memory/memory.json
+# Artefatos de build e distribuição na raiz.
+/build/
+/dist/
+*.egg-info/
 
-# ==========================================
-# ÁUDIO E CAPTURAS LOCAIS
-# ==========================================
-
-*.wav
-*.mp3
-*.ogg
-
-*.jpg
-*.jpeg
-*.png
-
-
-# ==========================================
-# FERRAMENTAS E ARQUIVOS DO SISTEMA
-# ==========================================
-
+# Configuração local de editores.
 .vscode/
 .idea/
 
+# Logs, arquivos temporários e metadados do sistema.
 *.log
-
-Thumbs.db
-Desktop.ini
-
-
-# ==========================================
-# TEMPORÁRIOS
-# ==========================================
-
 *.tmp
 *.temp
 *.bak
+Thumbs.db
+Desktop.ini
+.DS_Store

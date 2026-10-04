@@ -7,86 +7,68 @@
 ![Hugging Face](https://img.shields.io/badge/Hugging%20Face-Inference%20API-yellow?logo=huggingface&logoColor=black)
 ![Status](https://img.shields.io/badge/status-em%20desenvolvimento-yellow)
 
-Assistente pessoal de voz para Windows, desenvolvido em Python, com múltiplos provedores de IA, memória de conversa, memória persistente, ferramentas locais, visão e geração de imagens.
+Assistente pessoal para Windows, feito em Python. Ele conversa por texto ou voz, usa provedores de IA configuráveis e pode executar ferramentas locais, consultar memória e operar abas do Chrome pela extensão.
 
-> Projeto pessoal voltado à construção de um agente de IA capaz de conversar naturalmente, manter contexto, lembrar informações relevantes, utilizar ferramentas e interagir com o computador de forma controlada.
+Este repositório está em desenvolvimento. Recursos que dependem de APIs externas exigem uma chave válida, disponibilidade do provedor e, em alguns casos, créditos. Consulte [Limitações e privacidade](#limitações-e-privacidade) antes de enviar conteúdo a um serviço externo.
 
 ---
 
 ## Sumário
 
-- [Sobre o projeto](#sobre-o-projeto)
-- [Principais funcionalidades](#principais-funcionalidades)
+- [Início rápido](#início-rápido)
+- [Recursos](#recursos)
 - [Arquitetura](#arquitetura)
 - [Provedores de IA](#provedores-de-ia)
-- [Memória](#memória)
 - [Ferramentas](#ferramentas)
+- [Chrome e screenshots](#chrome-e-screenshots)
+- [Memória](#memória)
+- [Voz](#voz)
 - [Geração de imagens](#geração-de-imagens)
+- [Geração 3D](#geração-3d)
 - [Estrutura do projeto](#estrutura-do-projeto)
 - [Requisitos](#requisitos)
 - [Instalação](#instalação)
 - [Configuração](#configuração)
 - [Como usar](#como-usar)
-- [Configuração de voz](#configuração-de-voz)
-- [Interrupção da fala](#interrupção-da-fala)
-- [Segurança e privacidade](#segurança-e-privacidade)
-- [Status do projeto](#status-do-projeto)
-- [Próximos passos](#próximos-passos)
+- [Testes e contribuição](#testes-e-contribuição)
+- [Estado do projeto](#estado-do-projeto)
+- [Limitações e privacidade](#limitações-e-privacidade)
 - [Autor](#autor)
 - [Licença](#licença)
 
 ---
 
-## Sobre o projeto
+## Início rápido
 
-O **Agente Pessoal** começou como um assistente de voz para Windows e está evoluindo para uma arquitetura de agente pessoal capaz de combinar diferentes modelos de linguagem, memória e ferramentas.
+No Windows, com Python 3.12 instalado, abra o PowerShell na pasta do projeto:
 
-Em vez de depender de um único modelo, o projeto permite escolher entre diferentes provedores e modelos. O agente recebe a solicitação, mantém o contexto necessário e pode decidir quando uma ferramenta deve ser utilizada.
-
-Entre as ações disponíveis estão abertura de aplicativos e URLs, busca e leitura de arquivos, captura de tela e webcam, recuperação de memórias e geração de imagens.
-
----
-
-## Principais funcionalidades
-
-### Conversa por voz
-
-O pipeline de voz combina reconhecimento de fala, processamento pelo modelo e síntese de voz:
-
-```text
-Microfone
-   ↓
-STT
-   ↓
-Modelo de IA
-   ↓
-TTS
-   ↓
-Resposta por voz
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
 ```
 
-Atualmente há suporte para:
+Edite `.env` e configure a chave do provedor que pretende usar. Depois inicie:
 
-- Groq Whisper;
-- Fish Audio ASR;
-- Whisper local com `faster-whisper`;
-- Fish Audio TTS;
-- Edge TTS;
-- Gemini TTS;
-- streaming das respostas;
-- interrupção manual da fala com `Esc`;
-- interrupção automática por detecção de voz.
+```powershell
+.\Iniciar_Agente.bat
+```
 
-### Múltiplos provedores
+Também é possível iniciar diretamente com `python app.py`. A primeira execução mostra os menus de provedor, voz e privacidade da análise visual.
 
-O agente pode trabalhar com diferentes serviços de IA, permitindo trocar o modelo sem alterar a estrutura principal da aplicação.
+## Recursos
 
-- Gemini Live;
-- Groq;
-- OpenRouter;
-- NVIDIA NIM;
-- modo automático;
-- seleção de modelos nos provedores compatíveis.
+- Chat por texto e modo de voz, com opções de STT e TTS.
+- Seleção de modelo entre provedores configurados.
+- Ferramentas para arquivos, aplicativos, pesquisa na web e navegador.
+- Memória de conversa e memória persistente local.
+- Captura de tela e webcam.
+- Geração de imagens e ferramentas de geração 3D, algumas dependentes de serviços e créditos externos.
+- Extensão Chrome local para inspeção e interação com abas HTTP/HTTPS.
+
+O conjunto efetivamente disponível depende das chaves, modelos instalados e opções configuradas no computador.
 
 ---
 
@@ -138,25 +120,9 @@ Essa separação permite trocar o provedor de IA, o sistema de voz ou uma ferram
 
 ## Provedores de IA
 
-### Gemini Live
+O menu principal oferece Gemini (API ou Live), Groq, Mistral, Token Harbor, OpenRouter, NVIDIA, Ollama, Hugging Face e Automático. O catálogo de modelos é carregado conforme o provedor e a configuração local; provedores remotos podem exigir chave e cobrança/créditos.
 
-Modo de conversa em tempo real utilizando a infraestrutura do Gemini Live, com suporte a voz e recursos multimodais.
-
-### Groq
-
-Integração baseada em chat completions, com seleção de modelos e suporte ao Groq Whisper para reconhecimento de voz.
-
-### OpenRouter
-
-Permite utilizar diferentes modelos por meio de uma API compatível com o formato de chat completions.
-
-### NVIDIA
-
-Integração com NVIDIA NIM para utilização de diferentes modelos disponibilizados pela plataforma.
-
-### Automático
-
-Modo destinado ao roteamento entre os provedores configurados.
+O modo **Automático** tenta Token Harbor quando há uma chave configurada e, em seguida, Groq, Mistral, OpenRouter, NVIDIA e Hugging Face. Ele não seleciona Gemini nem Ollama automaticamente. Para esses provedores, escolha a opção diretamente no menu.
 
 ---
 
@@ -218,21 +184,6 @@ A memória persistente permanece local e não deve ser enviada ao repositório.
 
 ---
 
-### Token Harbor
-
-Integra a API OpenAI-compatible do Token Harbor com as rotas gratuitas atuais.
-O modelo padrao e `deepseek-v4.1-flash:free`, com alternativas
-`deepseek-v4-flash:free` e `mimo-v2.5:free`. A lista pode mudar no catalogo
-do servico.
-
-```env
-TOKENHARBOR_API_KEY=sua_chave_tokenharbor
-TOKENHARBOR_MODEL=deepseek-v4.1-flash:free
-TOKENHARBOR_BASE_URL=https://tokenharbor.ai/v1
-```
-
-No modo Automatico, Token Harbor e priorizado quando uma chave estiver configurada.
-
 ## Ferramentas
 
 O sistema utiliza ferramentas estruturadas para permitir que o modelo execute ações específicas sem receber acesso irrestrito ao computador.
@@ -267,6 +218,14 @@ O sistema utiliza ferramentas estruturadas para permitir que o modelo execute a�
 ### Imagens
 
 - `generate_image` para gerar imagens utilizando a Hugging Face Inference API.
+
+### Pesquisa e navegador
+
+- `web_search` encontra fontes públicas; `web_open` lê uma página; `deep_search` compara fontes e `code_search` prioriza documentação e repositórios.
+- As ferramentas `browser_*` operam abas HTTP/HTTPS da sessão Chrome por meio da extensão local. `browser_inspect` lê o estado e retorna referências de elementos; a extensão valida essas referências antes de clicar ou preencher. `browser_visual_click` captura, analisa e tenta um único clique visual. O screenshot aparece como prévia colorida no terminal e é enviado ao provedor visual selecionado; no fallback, a mesma imagem pode ser enviada a mais de um provedor.
+- Para instalar a integração no Windows, execute `tools\install_browser_bridge.ps1` no PowerShell a partir da raiz. Em `chrome://extensions`, habilite o modo do desenvolvedor e use **Carregar sem compactação** apontando para `browser_extension/`. Inicie/reinicie o agente e confira o popup da extensão. Para remover o host registrado, execute `tools\uninstall_browser_bridge.ps1`.
+- O Chrome não permite controlar páginas internas como `chrome://extensions`. Capturas antigas, mudanças de aba, navegação, rolagem ou viewport podem invalidar um clique. Campos de senha são bloqueados. Enviar, publicar, comprar, excluir ou confirmar pode exigir autorização explícita.
+
 
 ### Desenvolvimento de software
 
@@ -336,7 +295,11 @@ O modelo pode ser alterado pela variável `HF_IMAGE_MODEL` sem modificar o códi
 
 ---
 
-## Geração 3D local com TripoSR
+## Geração 3D
+
+Há ferramentas de geração 3D locais e hospedadas. Os serviços hospedados podem consumir créditos; a instalação do TripoSR é opcional e separada.
+
+### TripoSR local
 
 O agente também pode gerar um modelo 3D localmente usando o TripoSR, sem consumir créditos de API. Esse backend funciona a partir de uma imagem de referência e requer uma instalação separada do repositório oficial.
 
@@ -429,169 +392,120 @@ cria o visualizador HTML automaticamente.
 
 ```text
 agente_pessoal/
-│
-├── agent/
-│   └── agent.py
-│
-├── audio/
-│   ├── microphone.py
-│   ├── speech_to_text.py
-│   └── text_to_speech.py
-│
-├── gemini_live/
-│   └── client.py
-│
-├── memory/
-│   └── temporal_memory.py
-│
-├── providers/
-│   ├── compatible_agent.py
-│   ├── groq_provider.py
-│   ├── nvidia_provider.py
-│   ├── openrouter_provider.py
-│   └── router.py
-│
-├── screen/
-│   └── screen.py
-│
-├── tools/
-│   ├── computer.py
-│   ├── files.py
-│   └── image_generation.py
-│
-├── ui/
-│   └── ui.py
-│
-├── webcam/
-│   └── webcam.py
-│
-├── app.py
-├── .env.example
-├── .gitignore
+├── agent/              # agente e contratos
+├── audio/              # microfone, STT e TTS
+├── avatar/             # Live2D opcional e assets
+├── browser_extension/  # extensão Chrome Manifest V3
+├── gemini_live/        # cliente Gemini Live
+├── memory/             # memória temporal local
+├── providers/          # provedores, roteamento e visão
+├── screen/             # captura de tela
+├── tests/              # testes Python
+├── tools/              # navegador, arquivos, pesquisa e geração
+├── ui/                 # interface Rich no terminal
+├── webcam/             # captura de webcam
+├── app.py              # entrada da aplicação
+├── Iniciar_Agente.bat  # inicializador Windows
 ├── requirements.txt
 └── README.md
 ```
 
-A estrutura pode mudar conforme novas funcionalidades forem adicionadas.
+Saídas geradas ficam em `Pictures/AgentePessoal/`; a memória privada fica em `memory/memory.json`. Esses dados locais não devem ser commitados.
 
 ---
 
 ## Requisitos
 
-- Windows 10/11;
-- Python 3.12 ou versão compatível com as dependências instaladas;
-- microfone para utilização do modo de voz;
-- alto-falantes ou fones de ouvido para TTS;
-- webcam para as funcionalidades de captura de imagem;
-- conexão com internet para os provedores e serviços de IA utilizados.
+- Windows 10 ou 11.
+- Python 3.12 e o launcher `py`.
+- Internet e uma chave para cada serviço remoto que você escolher.
+- Microfone/alto-falantes são opcionais para a conversa por voz; webcam só é necessária para captura de webcam ou Gemini Live.
+- Node.js é opcional e necessário apenas para executar os testes da extensão.
 
 ---
 
 ## Instalação
 
-### 1. Clonar o repositório
+### 1. Baixar o projeto
 
 ```powershell
 git clone https://github.com/Thomas-Adrian-Soler-Nilsson/agente_pessoal.git
 cd agente_pessoal
 ```
 
-### 2. Criar o ambiente virtual
+Se você já tem uma cópia do repositório, abra o PowerShell nessa pasta e pule o clone.
+
+### 2. Criar e ativar o ambiente virtual
 
 ```powershell
-winget install Python.Python.3.12
-py -3.12 -m venv -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-Se o PowerShell bloquear a execução de scripts:
+Se o PowerShell bloquear a ativação, permita scripts somente nesta janela e tente novamente:
 
 ```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+.\.venv\Scripts\Activate.ps1
 ```
 
-Depois, ative novamente o ambiente virtual.
-
-### 3. Instalar as dependências
+### 3. Instalar dependências e criar configuração local
 
 ```powershell
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
 ```
 
 ---
 
 ## Configuração
 
-Crie o arquivo `.env` a partir do exemplo disponível no projeto:
+Edite `.env` e preencha somente as chaves dos serviços que pretende usar. O arquivo `.env.example` documenta as variáveis aceitas e não contém segredos.
 
-```powershell
-Copy-Item .env.example .env
-```
+| Serviço | Variável | Uso |
+| --- | --- | --- |
+| Gemini | `GEMINI_API_KEY` | Gemini API, Gemini Live e Gemini TTS |
+| Groq | `GROQ_API_KEY` | Chat Groq, Whisper STT e visão Groq |
+| Mistral | `MISTRAL_API_KEY` | Chat Mistral |
+| Token Harbor | `TOKENHARBOR_API_KEY` | Modelos compatíveis com OpenAI |
+| OpenRouter | `OPENROUTER_API_KEY` | Chat e modelos visuais OpenRouter |
+| NVIDIA | `NVIDIA_API_KEY` | NVIDIA NIM e, opcionalmente, TRELLIS |
+| Ollama | `OLLAMA_BASE_URL` | Ollama local; para Ollama Cloud configure também `OLLAMA_API_KEY` |
+| Hugging Face | `HF_TOKEN` ou `HF_API_KEY` | Chat, geração de imagens, TTS e outros modelos compatíveis |
+| Fish Audio | `FISH_API_KEY` | Fish ASR e TTS |
 
-Configure somente os serviços que pretende utilizar.
+Para voz, defina `STT_PROVIDER` (`local`, `groq` ou `fish`) e `TTS_PROVIDER` (`edge`, `fish`, `gemini` ou `huggingface`). O app também pergunta essas opções durante a inicialização.
 
-Exemplo:
+Para análise de screenshots, configure ao menos um provedor visual. `VISION_MODEL_ORDER` aceita IDs `provedor/modelo` separados por vírgulas; deixe vazio para usar a ordem automática disponível no app. A imagem pode ser enviada a mais de um provedor se o fallback for necessário.
 
-```env
-GEMINI_API_KEY=sua_chave_gemini
-GROQ_API_KEY=sua_chave_groq
-OPENROUTER_API_KEY=sua_chave_openrouter
-NVIDIA_API_KEY=sua_chave_nvidia
-FISH_API_KEY=sua_chave_fish
-FISH_VOICE_ID=seu_reference_id
-HF_API_KEY=sua_chave_huggingface
-HF_IMAGE_MODEL=black-forest-labs/FLUX.1-schnell
-```
-
-Nunca publique o arquivo `.env` no GitHub.
+Exemplos de modelos e variáveis opcionais estão em `.env.example`. Não coloque chaves no código, no README ou em issues públicas. O `.gitignore` mantém `.env` fora do Git.
 
 ---
 
 ## Como usar
 
-Com o ambiente virtual ativado:
+Inicie o app com o ambiente virtual ativo:
 
 ```powershell
 python app.py
+# ou
+.\Iniciar_Agente.bat
 ```
 
-O programa apresenta um menu semelhante a:
+Escolha um modo no menu. As opções atuais são Gemini, Groq, Mistral, Token Harbor, OpenRouter, NVIDIA, Ollama, Hugging Face e Automático. Gemini abre uma escolha entre Gemini API e Gemini Live. Os modelos disponíveis dependem da configuração local e do catálogo do provedor.
 
-```text
-======================================
-           AGENTE PESSOAL
-======================================
+Depois, selecione STT e TTS. Para usar só texto, digite a solicitação no prompt. Durante a resposta, pressione `Esc` para interromper o raciocínio; digite `/voz` para iniciar uma interação por voz quando disponível.
 
-[1] Gemini Live
+### Avatar opcional
 
-[2] Groq
-    ├── seleção de modelo
-
-[3] OpenRouter
-    ├── seleção de modelo
-
-[4] NVIDIA
-    ├── seleção de modelo
-
-[5] Automático
-```
-
-Depois da escolha do provedor, o programa solicita as configurações de STT e TTS disponíveis.
-
-### Avatar 3D opcional
-
-O modelo Live2D fica desativado inicialmente. Depois do menu principal, o programa exibe um diálogo de personalização:
-
-```text
-☐ Exibir modelo 3D [s/N]:
-```
-
-Ao pressionar Enter, a interface continua somente no terminal e o Live2D não é importado nem inicializado. O modelo só é carregado quando a opção é confirmada com `s` ou `sim`.
+O avatar Live2D é opcional e fica desligado por padrão. Confirme a opção no menu para tentar carregá-lo; os arquivos de modelo precisam estar presentes em `avatar/models/`.
 
 ---
 
-## Configuração de voz
+## Voz
+
+O modo texto pergunta qual STT e TTS usar no início. `STT_PROVIDER` e `TTS_PROVIDER` em `.env` definem os valores padrão quando aplicável; os provedores também podem exigir suas chaves de API.
 
 ### Edge TTS
 
@@ -629,7 +543,7 @@ GEMINI_TTS_VOICE=Kore
 
 ## Interrupção da fala
 
-A reprodução pode ser interrompida manualmente com `Esc`.
+A reprodução/resposta pode ser interrompida manualmente com `Esc`. No modo texto, digite `/voz` para iniciar a entrada pelo microfone.
 
 A detecção automática de fala durante o TTS pode ser ativada com:
 
@@ -643,17 +557,31 @@ TTS_INTERRUPT_THRESHOLD=0.08
 
 ---
 
-## Segurança e privacidade
+## Chrome e screenshots
 
-O projeto foi desenvolvido para manter dados locais sempre que possível.
+`browser_screenshot` captura uma aba HTTP/HTTPS do Chrome. O screenshot aparece como prévia colorida no CMD antes da análise; a prévia é renderizada em memória e não cria um arquivo no repositório. A imagem é enviada ao modelo visual escolhido, que retorna um alvo e coordenadas em pixels. Em fallback, provedores adicionais podem receber a mesma imagem.
 
-- chaves de API são armazenadas no `.env`;
-- `.env` e ambientes virtuais são ignorados pelo Git;
-- memórias persistentes locais não devem ser publicadas;
-- áudios e capturas locais são ignorados pelo Git;
-- ferramentas possuem escopo definido;
-- o agente não recebe comandos destrutivos arbitrários;
-- resultados das ferramentas devem ser tratados como fonte da verdade.
+Na inicialização do modo texto, escolha fallback automático, ordem personalizada para a sessão, um provedor fixo ou desative a análise. Para definir uma ordem padrão, configure `VISION_MODEL_ORDER` com IDs disponíveis `provedor/modelo` separados por vírgula:
+
+```env
+VISION_MODEL_ORDER=groq/qwen/qwen3.8-27b,gemini/gemma-4-31b-it,openrouter/google/gemma-4-31b-it:free
+```
+
+As rotas remotas aparecem quando as respectivas chaves estão configuradas. O Ollama local detecta modelos instalados com visão; `OLLAMA_LOCAL_VISION_MODEL` pode indicar um modelo específico. Para Ollama Cloud, configure `OLLAMA_API_KEY` e, opcionalmente, `OLLAMA_CLOUD_VISION_MODEL` e `OLLAMA_CLOUD_BASE_URL`. Os catálogos podem ser limitados com `OPENROUTER_VISION_MODELS`, `GEMINI_VISION_MODELS` e `GROQ_VISION_MODEL`.
+
+Cada clique visual usa um `screenshot_id` e passa por validações de aba, URL, viewport e alvo. Um alvo ausente, ambíguo, uma página alterada ou um provedor indisponível interrompem a ação sem clicar. Ações externas podem pedir confirmação. Para páginas sensíveis, escolha um provedor local ou desative a análise.
+
+---
+
+## Limitações e privacidade
+
+O projeto usa serviços locais e remotos. A chave e o modelo selecionados determinam para onde texto, áudio ou screenshots são enviados.
+
+- Não compartilhe `.env`, `memory/memory.json`, perfis do navegador ou arquivos locais de sessão.
+- A prévia do screenshot no terminal é temporária; a análise remota pode enviar a mesma captura a mais de um provedor de fallback.
+- A extensão só opera em páginas HTTP/HTTPS e não controla páginas internas do Chrome.
+- Campos de senha são bloqueados. Envios, compras, exclusões e outras ações externas podem exigir confirmação.
+- A análise visual depende de quota, rede e disponibilidade dos provedores. Falhas/timeout significam que nenhuma coordenada utilizável foi produzida.
 
 Antes de realizar um commit, confira os arquivos que serão enviados:
 
@@ -664,53 +592,28 @@ git status --short --ignored
 
 ---
 
-## Status do projeto
+## Testes e contribuição
 
-**Em desenvolvimento.**
+Ative o ambiente virtual antes de executar os testes Python:
 
-### Implementado
+```powershell
+python -m pytest -q
+```
 
-- [x] Agente de voz para Windows
-- [x] Gemini Live
-- [x] Groq
-- [x] OpenRouter
-- [x] NVIDIA
-- [x] Seleção de modelos
-- [x] STT local, Groq e Fish Audio
-- [x] TTS Edge, Fish Audio e Gemini
-- [x] Personas para vozes Fish Audio
-- [x] Memória momentânea da conversa
-- [x] Memória temporal persistente
-- [x] Busca de memória através de ferramenta
-- [x] Decisão do modelo sobre quando salvar uma memória
-- [x] Ferramentas para arquivos
-- [x] Abertura de aplicativos e URLs
-- [x] Captura de tela
-- [x] Captura de webcam
-- [x] Geração de imagens via Hugging Face
-- [x] Streaming de respostas para TTS
-- [x] Interrupção manual da fala
+Os testes da extensão usam `node:test`:
+
+```powershell
+node --test browser_extension/field_policy.test.js browser_extension/service_worker_connection.test.js browser_extension/visual_state_guard.test.js
+```
+
+Ao contribuir, atualize `.env.example` e este README quando mudar variáveis, opções de menu, comandos ou comportamento visível. Não inclua chaves, memória local, perfis Chrome, logs ou saídas geradas. Execute os testes relevantes e revise `git status --short --ignored` antes de enviar alterações.
 
 ---
 
-## Próximos passos
+## Estado do projeto
+## Licença
 
-- [ ] Melhorar a interrupção automática da fala por voz;
-- [ ] reduzir a latência do pipeline voz → IA → voz;
-- [ ] evoluir a memória temporal;
-- [ ] adicionar recuperação semântica para memória de longo prazo;
-- [ ] expandir as ferramentas disponíveis para o computador;
-- [ ] melhorar o roteamento entre provedores e modelos;
-- [ ] criar uma interface gráfica dedicada;
-- [ ] gerar uma versão instalável para Windows.
-
----
-
-## Objetivo do projeto
-
-O objetivo é construir um agente pessoal de IA que vá além de um chatbot tradicional.
-
-O sistema deve ser capaz de conversar naturalmente, manter contexto, lembrar informações relevantes, perceber o ambiente, utilizar ferramentas e executar tarefas de forma controlada, mantendo o usuário no comando.
+O projeto está em desenvolvimento. A disponibilidade de cada recurso depende das dependências, chaves de API, modelos locais e serviços de terceiros configurados.
 
 ---
 
@@ -724,7 +627,5 @@ Projeto pessoal desenvolvido em Python e em evolução contínua.
 - Repositório: https://github.com/Thomas-Adrian-Soler-Nilsson/agente_pessoal
 
 ---
-
-## Licença
 
 Nenhuma licença open-source foi definida neste momento. Consulte o autor antes de reutilizar ou redistribuir o projeto.

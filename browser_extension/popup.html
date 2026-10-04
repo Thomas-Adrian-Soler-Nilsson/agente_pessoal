@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="pt-BR">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agente Pessoal</title>
+<style>
+	body { min-width: 290px; margin: 0; padding: 16px; color: #172033; font: 14px system-ui, sans-serif; }
+	h1 { margin: 0 0 12px; font-size: 16px; }
+	#status { min-height: 40px; margin: 0 0 8px; }
+	#hint { min-height: 34px; margin: 0 0 14px; color: #586174; font-size: 12px; }
+	button { width: 100%; padding: 9px 12px; border: 0; border-radius: 4px; background: #245b4a; color: white; font: inherit; cursor: pointer; }
+	button:disabled { background: #687b75; cursor: default; }
+</style>
+<h1>Agente Pessoal</h1>
+<div id="status" role="status" aria-live="polite">Verificando conexão…</div>
+<p id="hint">A conexão é automática enquanto o app estiver aberto.</p>
+<button id="reconnect" type="button">Tentar conectar agora</button>
+<script src="popup.js"></script>
+</html>

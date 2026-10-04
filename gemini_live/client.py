@@ -1,4 +1,7 @@
 import asyncio
+import base64
+import binascii
+import math
 import os
 import threading
 
@@ -13,6 +16,7 @@ from google.genai import types
 from tools.computer import ComputerTools
 from tools.browser import BrowserTools
 from tools.files import FileTools
+from ui import ui
 
 
 load_dotenv()
@@ -182,6 +186,14 @@ na tela, olhe a tela.
 Se estiver pedindo para acompanhar continuamente,
 ative o watcher apropriado.
 
+Para interagir com uma página do Chrome, primeiro use
+browser_list_tabs e browser_inspect com o tab_id escolhido.
+Use browser_click/browser_fill somente com element_ref recém-
+retornado pela inspeção. Para controles visuais, use
+browser_visual_click: ele captura a aba, analisa a imagem e só
+clica em um alvo claro e compatível com o pedido. Não invente
+coordenadas nem reutilize referências após navegação.
+
 ========================================
 CONVERSA
 ========================================
@@ -245,44 +257,96 @@ FUNCTION_DECLARATIONS = [
     {
         "name": "browser_navigate",
         "description": (
-            "Abre uma página em uma sessão persistente do navegador automatizado."
+            "Navega para uma URL em uma aba Chrome; sem tab_id abre uma nova aba."
         ),
         "parameters": {
             "type": "object",
-            "properties": {"url": {"type": "string"}},
+            "properties": {
+                "url": {"type": "string"},
+                "tab_id": {"type": "integer"},
+            },
             "required": ["url"],
         },
     },
 
     {
-        "name": "browser_read",
-        "description": "Lê o texto visível da página atual.",
+        "name": "browser_list_tabs",
+        "description": "Lista as abas HTTP(S) abertas no Chrome com ID, título e URL.",
         "parameters": {
             "type": "object",
-            "properties": {"max_chars": {"type": "integer"}},
+            "properties": {},
+        },
+    },
+
+    {
+        "name": "browser_inspect",
+        "description": "Lê uma aba e retorna referências recentes para seus controles interativos.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tab_id": {"type": "integer"},
+                "max_chars": {"type": "integer"},
+            },
+            "required": ["tab_id"],
+        },
+    },
+
+    {
+        "name": "browser_open_tab",
+        "description": "Abre uma nova aba no perfil atual do Chrome.",
+        "parameters": {
+            "type": "object",
+            "properties": {"url": {"type": "string"}},
         },
     },
 
     {
         "name": "browser_click",
-        "description": "Clica em um elemento da página usando um seletor.",
+        "description": "Clica em uma referência element_ref recém-retornada por browser_inspect.",
         "parameters": {
             "type": "object",
-            "properties": {"selector": {"type": "string"}},
-            "required": ["selector"],
+            "properties": {
+                "tab_id": {"type": "integer"},
+                "element_ref": {"type": "string"},
+            },
+            "required": ["tab_id", "element_ref"],
         },
     },
 
     {
         "name": "browser_fill",
-        "description": "Preenche um campo da página usando um seletor.",
+        "description": "Preenche um campo comum por element_ref recém-retornado; campos de senha são bloqueados.",
         "parameters": {
             "type": "object",
             "properties": {
-                "selector": {"type": "string"},
+                "tab_id": {"type": "integer"},
+                "element_ref": {"type": "string"},
                 "value": {"type": "string"},
             },
-            "required": ["selector", "value"],
+            "required": ["tab_id", "element_ref", "value"],
+        },
+    },
+
+    {
+        "name": "browser_screenshot",
+        "description": "Captura a aba Chrome e envia a imagem para a sessão Gemini Live.",
+        "parameters": {
+            "type": "object",
+            "properties": {"tab_id": {"type": "integer"}},
+            "required": ["tab_id"],
+        },
+    },
+
+    {
+        "name": "browser_visual_click",
+        "description": "Captura e analisa a aba para clicar uma vez no controle visual indicado, verificando a página depois.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tab_id": {"type": "integer"},
+                "goal": {"type": "string"},
+            },
+            "required": ["tab_id", "goal"],
         },
     },
 
@@ -449,6 +513,8 @@ class GeminiLive:
         screen,
         webcam,
         tts=None,
+        vision_agent=None,
+        browser_tools=None,
     ):
 
         api_key = os.getenv(
@@ -471,9 +537,8 @@ class GeminiLive:
             ComputerTools()
         )
 
-        self.browser = (
-            BrowserTools()
-        )
+        self.browser = browser_tools if browser_tools is not None else BrowserTools()
+        self._owns_browser = browser_tools is None
 
         self.files = (
             FileTools()
@@ -496,6 +561,115 @@ class GeminiLive:
 
         self.input_transcript = ""
         self.output_transcript = ""
+        self.vision_agent = vision_agent
+
+    def _confirm_browser_outcome(self, outcome, retry):
+        if not isinstance(outcome, dict) or outcome.get("status") != "confirmation_required":
+            return outcome
+        data = outcome.get("data") or {}
+        label = data.get("label", "ação externa")
+        answer = ui.prompt(f"O Chrome vai executar '{label}'. Autorizar? [s/N]: ").strip().lower()
+        if answer not in {"s", "sim", "y", "yes"}:
+            return {**outcome, "status": "failure", "error_code": "user_denied", "observation": "Ação cancelada pelo usuário; nada foi enviado."}
+        return retry(data.get("confirmation_token", ""))
+
+    async def _send_browser_screenshot(self, tab_id):
+        capture = self.browser.screenshot(tab_id)
+        image = capture.get("data") if isinstance(capture, dict) else None
+        if capture.get("status") != "success" or not isinstance(image, dict) or image.get("type") != "image":
+            return capture
+        try:
+            image_bytes = base64.b64decode(image.get("data", ""), validate=True)
+            if not image_bytes:
+                raise ValueError("empty_screenshot")
+        except (binascii.Error, TypeError, ValueError):
+            return {"status": "failure", "error_code": "invalid_screenshot_data", "observation": "A captura do Chrome não contém uma imagem válida."}
+        await self.session.send_realtime_input(
+            video=types.Blob(data=image_bytes, mime_type=image.get("mime_type", "image/jpeg"))
+        )
+        return {
+            "status": "success",
+            "screenshot_id": image.get("screenshot_id"),
+            "width": image.get("width"),
+            "height": image.get("height"),
+            "observation": "Captura da aba enviada para análise na sessão Gemini Live.",
+        }
+
+    def _browser_visual_click(self, tab_id, goal):
+        if isinstance(tab_id, bool) or not isinstance(tab_id, int) or not str(goal or "").strip():
+            return {"status": "failure", "error_code": "invalid_arguments", "observation": "Informe tab_id e um objetivo visual específico."}
+        if self.vision_agent is None:
+            return {"status": "failure", "error_code": "vision_not_configured", "observation": "Configure um provedor visual para clicar por imagem."}
+
+        capture = self.browser.screenshot(tab_id)
+        image = capture.get("data") if isinstance(capture, dict) else None
+        if capture.get("status") != "success" or not isinstance(image, dict) or image.get("type") != "image":
+            return capture
+        screenshot_id = image.get("screenshot_id")
+        analysis = self.vision_agent.analyze(image, str(goal).strip())
+        if not isinstance(analysis, dict) or analysis.get("status") != "success":
+            return {"status": "failure", "error_code": analysis.get("error_code", "vision_analysis_failed") if isinstance(analysis, dict) else "vision_analysis_failed", "observation": analysis.get("observation", "A captura não pôde ser analisada.") if isinstance(analysis, dict) else "A captura não pôde ser analisada.", "analysis": analysis}
+        if analysis.get("screenshot_id") != screenshot_id:
+            return {"status": "uncertain", "error_code": "screenshot_id_mismatch", "observation": "A análise não corresponde à captura atual; nenhum clique foi feito.", "analysis": analysis}
+
+        visual = analysis.get("analysis")
+        width, height = image.get("width"), image.get("height")
+        if not isinstance(visual, dict) or visual.get("status") != "targets_found":
+            return {"status": "uncertain", "error_code": "no_actionable_target", "observation": "Nenhum alvo visual claro foi identificado; nenhum clique foi feito.", "analysis": analysis}
+        if not (isinstance(width, int) and not isinstance(width, bool) and width > 0 and isinstance(height, int) and not isinstance(height, bool) and height > 0):
+            return {"status": "failure", "error_code": "invalid_screenshot_dimensions", "observation": "A captura não tem dimensões válidas; nenhum clique foi feito.", "analysis": analysis}
+
+        candidates = []
+        targets = visual.get("targets", [])
+        for target in targets if isinstance(targets, list) else []:
+            if not isinstance(target, dict) or target.get("actionable") is not True:
+                continue
+            x, y, confidence = target.get("x"), target.get("y"), target.get("confidence")
+            if isinstance(x, bool) or not isinstance(x, int) or isinstance(y, bool) or not isinstance(y, int):
+                continue
+            if not isinstance(confidence, (int, float)) or isinstance(confidence, bool) or not math.isfinite(confidence):
+                continue
+            if 0 <= x < width and 0 <= y < height and 0.72 <= confidence <= 1:
+                if not str(target.get("label") or "").strip():
+                    target["label"] = str(
+                        target.get("aria_label")
+                        or target.get("title")
+                        or target.get("alt")
+                        or target.get("tag")
+                        or "controle visual"
+                    ).strip()[:180]
+                candidates.append(target)
+        if not candidates:
+            return {"status": "uncertain", "error_code": "no_actionable_target", "observation": "Não há alvo acionável com confiança suficiente; nenhum clique foi feito.", "analysis": analysis}
+
+        confidence = max(float(target["confidence"]) for target in candidates)
+        best = [target for target in candidates if float(target["confidence"]) == confidence]
+        if len(best) != 1:
+            return {"status": "uncertain", "error_code": "ambiguous_visual_target", "observation": "Há mais de um alvo com a mesma confiança; nenhum clique foi feito.", "analysis": analysis}
+
+        target = best[0]
+        expected_label = str(target.get("label", ""))
+        click = self.browser.click_at(tab_id, screenshot_id, target["x"], target["y"], expected_label=expected_label)
+        click = self._confirm_browser_outcome(
+            click,
+            lambda token: self.browser.click_at(tab_id, screenshot_id, target["x"], target["y"], token, expected_label),
+        )
+        if click.get("status") == "confirmation_required":
+            return {"status": "confirmation_required", "error_code": click.get("error_code", "user_confirmation_required"), "target": target, "click": click, "analysis": analysis}
+        if click.get("status") not in {"success", "uncertain"}:
+            return {"status": click.get("status", "failure"), "error_code": click.get("error_code", "visual_click_failed"), "target": target, "click": click, "analysis": analysis}
+
+        verification = self.browser.inspect(tab_id)
+        verified = click.get("status") == "success" and verification.get("status") == "success"
+        return {
+            "status": "success" if verified else "uncertain",
+            "error_code": "" if verified else "post_click_verification_uncertain",
+            "observation": "Clique executado e aba inspecionada." if verified else "O clique não teve resultado observável suficiente.",
+            "target": {"label": str(target.get("label", ""))[:180], "x": target["x"], "y": target["y"], "confidence": confidence},
+            "click": click,
+            "verification": verification,
+            "analysis": analysis,
+        }
 
     # ==========================================================
     # TOOL EXECUTOR
@@ -565,23 +739,36 @@ class GeminiLive:
                     )
 
                 elif name == "browser_navigate":
-                    result = self.browser.navigate(
-                        arguments.get("url", "")
-                    )
+                    result = self.browser.navigate(arguments.get("url", ""), arguments.get("tab_id"))
 
-                elif name == "browser_read":
-                    result = self.browser.read(
-                        arguments.get("max_chars")
-                    )
+                elif name == "browser_list_tabs":
+                    result = self.browser.list_tabs()
+
+                elif name == "browser_inspect":
+                    result = self.browser.inspect(arguments.get("tab_id"), arguments.get("max_chars", 12000))
+
+                elif name == "browser_open_tab":
+                    result = self.browser.open_tab(arguments.get("url", ""))
+
+                elif name == "browser_screenshot":
+                    result = await self._send_browser_screenshot(arguments.get("tab_id"))
+
+                elif name == "browser_visual_click":
+                    result = self._browser_visual_click(arguments.get("tab_id"), arguments.get("goal", ""))
 
                 elif name == "browser_click":
-                    result = self.browser.click(
-                        arguments.get("selector", "")
+                    tab_id = arguments.get("tab_id")
+                    element_ref = arguments.get("element_ref", "")
+                    outcome = self.browser.click(tab_id, element_ref)
+                    result = self._confirm_browser_outcome(
+                        outcome,
+                        lambda token: self.browser.click(tab_id, element_ref, token),
                     )
 
                 elif name == "browser_fill":
                     result = self.browser.fill(
-                        arguments.get("selector", ""),
+                        arguments.get("tab_id"),
+                        arguments.get("element_ref", ""),
                         arguments.get("value", ""),
                     )
 
@@ -1246,3 +1433,5 @@ class GeminiLive:
             self.external_tts.stop()
 
         self.session = None
+        if self._owns_browser:
+            self.browser.close()

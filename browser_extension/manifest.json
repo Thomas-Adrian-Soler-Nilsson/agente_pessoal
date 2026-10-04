@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Agente Pessoal Browser Bridge",
+  "version": "1.0.0",
+  "description": "Controla abas selecionadas do Chrome pelo Agente Pessoal local.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApGvf20qFqFcYo80NEM+5zHWkZl+8Pzug0tbpEkXBGYdnvFWLNeBwZ147L7h9s6ox16q885yMZ2hcJvA8oZe4kPL4QC86fboTEmr+thfdQFn2eaPizwL5vv42agwOBnRrFpxv5cOLYQDzJw6ApeYRH9btU+ELpgLPEwBCwqa+MWD8mSalBYyp6j2wCVj9PiXPmhBJqjyKIFCN/xu7HdWafsGif/n6lKYcLAGDXOKeG3AZ4MPY4Nh9AhXt41QPuHOGblPxLPF72ImO+OdUZFOAnUtPuVyQTTEgkvYoym4hJiBVq118ONFwyGf1GHXxoYKm6D6E8zbXx21pOz3sIVxHMwIDAQAB",
+  "permissions": [
+    "debugger",
+    "tabs",
+    "nativeMessaging",
+    "downloads",
+    "storage",
+    "alarms"
+  ],
+  "background": {
+    "service_worker": "service_worker.js"
+  },
+  "action": {
+    "default_title": "Agente Pessoal",
+    "default_popup": "popup.html"
+  }
+}

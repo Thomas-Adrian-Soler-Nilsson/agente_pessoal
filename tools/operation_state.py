@@ -32,7 +32,6 @@ class OperationState:
 
     def record_success(self, operation: str):
         self.last_successful_operation = operation
-        self.last_error = ""
 
     def record_error(self, error):
         self.last_error = str(error)[:500]

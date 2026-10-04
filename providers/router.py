@@ -13,32 +13,39 @@ from .gemini_provider import GeminiAgent, available_models as gemini_models
 
 
 class ProviderRouter:
-    def __init__(self, tool_executor):
+    def __init__(self, tool_executor, vision_agent=None):
         self.tool_executor = tool_executor
+        self.vision_agent = vision_agent
+
+    def _attach_vision_agent(self, provider):
+        wrapped_agent = getattr(provider, "agent", None)
+        if wrapped_agent is not None:
+            wrapped_agent.vision_agent = self.vision_agent
+        return provider
 
     def groq(self, model=None):
-        return GroqAgent(self.tool_executor, model=model)
+        return self._attach_vision_agent(GroqAgent(self.tool_executor, model=model))
 
     def gemini(self, model=None):
-        return GeminiAgent(self.tool_executor, model=model)
+        return self._attach_vision_agent(GeminiAgent(self.tool_executor, model=model))
 
     def tokenharbor(self, model=None):
-        return TokenHarborAgent(self.tool_executor, model=model)
+        return self._attach_vision_agent(TokenHarborAgent(self.tool_executor, model=model))
 
     def openrouter(self, model=None):
-        return OpenRouterAgent(self.tool_executor, model=model)
+        return self._attach_vision_agent(OpenRouterAgent(self.tool_executor, model=model))
 
     def nvidia(self, model=None):
-        return NvidiaAgent(self.tool_executor, model=model)
+        return self._attach_vision_agent(NvidiaAgent(self.tool_executor, model=model))
 
     def ollama(self, model=None):
-        return OllamaAgent(self.tool_executor, model=model)
+        return self._attach_vision_agent(OllamaAgent(self.tool_executor, model=model))
 
     def mistral(self, model=None):
-        return MistralAgent(self.tool_executor, model=model)
+        return self._attach_vision_agent(MistralAgent(self.tool_executor, model=model))
 
     def huggingface(self, model=None):
-        return HuggingFaceAgent(self.tool_executor, model=model)
+        return self._attach_vision_agent(HuggingFaceAgent(self.tool_executor, model=model))
 
     def automatic(
         self,
@@ -57,6 +64,7 @@ class ProviderRouter:
             mistral_model,
             huggingface_model,
             tokenharbor_model,
+            self.vision_agent,
         )
 
 
@@ -70,6 +78,7 @@ class AutomaticAgent:
         mistral_model=None,
         huggingface_model=None,
         tokenharbor_model=None,
+        vision_agent=None,
     ):
         self.tool_executor = tool_executor
         self.groq_model = groq_model
@@ -78,6 +87,7 @@ class AutomaticAgent:
         self.mistral_model = mistral_model
         self.huggingface_model = huggingface_model
         self.tokenharbor_model = tokenharbor_model
+        self.vision_agent = vision_agent
         self.current = None
         self.messages = None
         self.personality = ""
@@ -93,6 +103,9 @@ class AutomaticAgent:
             model,
             base_messages,
         )
+        wrapped_agent = getattr(self.current, "agent", None)
+        if wrapped_agent is not None:
+            wrapped_agent.vision_agent = self.vision_agent
         self.current.set_personality(self.personality)
         yield from self.current.ask_stream(text, cancel_event=cancel_event)
         if cancel_event is None or not cancel_event.is_set():
